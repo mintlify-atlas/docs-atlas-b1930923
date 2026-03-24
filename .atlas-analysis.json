@@ -1,0 +1,108 @@
+{
+  "projectType": "infrastructure",
+  "projectName": "EdgeCaster",
+  "projectDescription": "A lightweight edge gateway that converts Rhombus Secure Raw Streams into RTSP streams via MediaMTX, running on Raspberry Pi 5.",
+  "theme": "aspen",
+  "primaryColor": "#cc3762",
+  "lightColor": "#4baa50",
+  "darkColor": "#150e0e",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": ["introduction", "quickstart", "hardware-requirements"]
+          },
+          {
+            "group": "Setup & Deployment",
+            "pages": [
+              "deployment/installation",
+              "deployment/raspberry-pi-image",
+              "deployment/systemd-services",
+              "deployment/auto-updates"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/config-files",
+              "configuration/network-ports",
+              "configuration/mediamtx"
+            ]
+          },
+          {
+            "group": "Usage",
+            "pages": [
+              "usage/first-run",
+              "usage/camera-discovery",
+              "usage/managing-streams",
+              "usage/web-ui"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "operations/monitoring",
+              "operations/logs",
+              "operations/security",
+              "operations/troubleshooting"
+            ]
+          },
+          {
+            "group": "Development",
+            "pages": [
+              "development/local-setup",
+              "development/architecture",
+              "development/testing"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": ["api/overview"]
+          },
+          {
+            "group": "Endpoints",
+            "pages": [
+              "api/auth",
+              "api/cameras",
+              "api/streams",
+              "api/settings",
+              "api/system"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Automatic camera discovery via Rhombus API",
+    "Web UI for enabling/disabling RTSP streams per camera",
+    "Up to 10 concurrent RTSP streams with stream copy (no transcoding)",
+    "Automatic stream recovery on failure with configurable retry logic",
+    "Persistent stream state across reboots via JSON state store",
+    "Systemd-native deployment with watchdog integration",
+    "Configurable nightly auto-update window",
+    "Raspberry Pi SD card image builder (cloud-init and pre-baked modes)",
+    "FFmpeg-based stream pull and MediaMTX RTSP rebroadcast",
+    "Deterministic RTSP path slugs from camera names"
+  ],
+  "publicApiSurface": [
+    "GET /api/auth/status",
+    "GET /api/settings",
+    "POST /api/settings/api-key",
+    "PUT /api/settings/update-schedule",
+    "POST /api/settings/discovery/refresh",
+    "GET /api/cameras",
+    "GET /api/streams",
+    "POST /api/streams/{uuid}/enable",
+    "POST /api/streams/{uuid}/disable",
+    "GET /api/system/status"
+  ]
+}
