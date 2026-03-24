@@ -1,0 +1,133 @@
+---
+title: "Web UI"
+description: "Using the EdgeCaster browser interface to manage cameras, streams, and settings."
+---
+
+The EdgeCaster web interface is a single-page React application served directly from the device. It provides real-time visibility into camera and stream status and is the primary way most users interact with the system.
+
+**Access URL:**
+
+```
+http://edgecaster.local
+```
+
+or, if mDNS is unavailable:
+
+```
+http://<device-ip>
+```
+
+<Note>
+  There is no HTTP authentication on the web UI or the API. Anyone on the same network who can reach the device can view and control streams. Deploy EdgeCaster only on trusted, isolated networks.
+</Note>
+
+## Dashboard
+
+The **Dashboard** page loads by default after setup and gives an at-a-glance view of system health.
+
+### Stats cards
+
+| Stat | Description |
+|---|---|
+| Active Streams | Number of currently enabled streams |
+| Cameras Found | Total cameras discovered from your Rhombus org |
+| CPU Usage | Current CPU utilization percentage with a color-coded progress bar (yellow ≥ 60%, red ≥ 80%) |
+| Memory Usage | Current memory utilization percentage with the same color coding |
+| Uptime | Time since the EdgeCaster service last started |
+| Stream Capacity | Active streams vs. the configured maximum (e.g., `3/10`) |
+
+### Active streams table
+
+All managed streams (regardless of state) are listed in a table showing the camera name, RTSP URL, and current status badge. Click the copy icon next to an RTSP URL to copy it to your clipboard.
+
+### Failed streams alert
+
+If any streams are in the `failed` state, a separate **Failed Streams** section appears at the top of the dashboard with the camera name, RTSP path, status badge, and the last error message logged by the stream manager.
+
+### Device info
+
+At the bottom of the dashboard, a **Device Info** card shows the hostname, local IP address, and the base RTSP URL for the device (`rtsp://<local_ip>:8554/`).
+
+## Camera list
+
+The **Cameras** page is the main control surface for managing streams.
+
+### Table columns
+
+| Column | Description |
+|---|---|
+| Camera | Camera name as configured in Rhombus Console |
+| Location | Location group the camera belongs to |
+| Status | Camera connectivity badge (`online`, `degraded`, `offline`, `unknown`) |
+| Stream | Stream state badge when a stream is active; empty otherwise |
+| RTSP | Toggle switch to enable or disable the stream for this camera |
+| RTSP URL | The full RTSP URL shown when the stream is enabled, with a copy button |
+
+### Filtering and search
+
+The toolbar above the table provides:
+
+- **Search box** — filters by camera name or location name.
+- **Filter pills** — quick filters for **All**, **Online**, **Offline**, and **Streaming** cameras, each showing a count of matching cameras.
+
+### Enabling a stream
+
+Flip the toggle in the **RTSP** column to enable a camera. The toggle is disabled (grayed out) for un-enabled cameras when the stream limit has been reached. An info banner appears at the bottom of the list when the limit is hit.
+
+### Copying an RTSP URL
+
+When a stream is enabled, its RTSP URL appears in the **RTSP URL** column. Click the copy icon to the right of the URL to copy it to your clipboard. The icon briefly changes to a checkmark to confirm the copy.
+
+<Info>
+  The clipboard API requires a secure context in some browsers. If the copy button does not work, select the URL text manually and copy it.
+</Info>
+
+### Refreshing the camera list
+
+Click **Refresh** in the top-right of the Cameras toolbar to trigger a new discovery pass against the Rhombus API. This is the same as calling `POST /api/settings/discovery/refresh`. Use it after adding new cameras in Rhombus Console.
+
+## Status badges
+
+Status badges appear in both the camera list and the dashboard streams table.
+
+### Camera status
+
+| Badge | Meaning |
+|---|---|
+| `online` | Camera is reporting `GREEN` connectivity to Rhombus |
+| `degraded` | Camera is reporting `YELLOW` or `ORANGE` connectivity |
+| `offline` | Camera is reporting `RED` connectivity |
+| `unknown` | Connectivity status could not be determined |
+
+### Stream state
+
+| Badge | Meaning |
+|---|---|
+| `starting` | Stream request accepted; Rhombus API call and FFmpeg launch in progress |
+| `running` | FFmpeg is active and publishing to MediaMTX |
+| `restarting` | FFmpeg exited; automatic retry in progress |
+| `failed` | Retries exhausted; backoff period active before next recovery attempt |
+| `stopped` | Stream was manually disabled |
+
+When a stream is in `failed` state, a secondary note — *"Check logs for error"* — is displayed below the badge in the camera list.
+
+## Settings
+
+The **Settings** page has three sections.
+
+### API key
+
+Displays whether a Rhombus Org API Key is currently configured. To replace it, enter a new key and click **Save**. EdgeCaster validates the new key against the Rhombus API before saving; if validation fails, the existing key is preserved.
+
+### Discovery refresh
+
+A **Refresh Cameras** button that triggers `POST /api/settings/discovery/refresh`, identical to the Refresh button on the Cameras page.
+
+### Update window
+
+EdgeCaster can apply git-based updates automatically via a systemd timer. The **Update Window** section lets you:
+
+- Enable or disable automatic updates.
+- Set the start hour and end hour of the allowed update window (0–23, 24-hour format). The default window is 02:00–05:00.
+
+Changes are saved immediately via `PUT /api/settings/update-schedule`.

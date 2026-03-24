@@ -1,0 +1,96 @@
+---
+title: "Introduction"
+description: "EdgeCaster is a lightweight edge gateway that converts Rhombus Secure Raw Streams into RTSP streams via MediaMTX, running on Raspberry Pi 5."
+---
+
+<img
+  src="https://media.brand.dev/eb835e0e-dbeb-46e9-86c4-07476ca76871.svg"
+  alt="EdgeCaster"
+  style={{ height: "60px", marginBottom: "2rem" }}
+/>
+
+EdgeCaster runs on a Raspberry Pi 5 and bridges the gap between Rhombus AI security cameras and legacy video systems that require RTSP streams. It handles camera discovery, stream token management, FFmpeg orchestration, and automatic recovery — all from a simple web interface.
+
+## How it works
+
+```
+Rhombus Camera
+     │
+     │ Secure Raw Stream (HTTPS H264)
+     ▼
+EdgeCaster (FFmpeg pull)
+     │
+     ▼
+MediaMTX (RTSP server)
+     │
+     ▼
+External Systems (VMS / NVR / AI)
+```
+
+EdgeCaster authenticates to the Rhombus API, discovers all cameras in your organization, lets you select which ones to stream, then uses FFmpeg to pull each camera's Secure Raw Stream and rebroadcast it as a standard RTSP stream via MediaMTX.
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Automatic camera discovery" icon="camera">
+    Cameras are discovered automatically from your Rhombus organization via the API. No manual IP configuration required.
+  </Card>
+  <Card title="Web UI management" icon="browser">
+    Enable or disable RTSP streams for each camera from a clean browser interface accessible at `http://edgecaster.local`.
+  </Card>
+  <Card title="Stream copy, no transcoding" icon="bolt">
+    FFmpeg uses `-c copy` to relay H264 without decoding or re-encoding. Minimal CPU usage on the Pi.
+  </Card>
+  <Card title="Automatic recovery" icon="rotate">
+    Failed streams are retried automatically with a 5-second delay, up to 10 attempts, then a 5-minute backoff — indefinitely.
+  </Card>
+  <Card title="Persistent state" icon="floppy-disk">
+    Enabled streams are saved to disk and restored automatically on reboot. No manual reconfiguration needed.
+  </Card>
+  <Card title="Systemd-native" icon="server">
+    Deployed as systemd services with watchdog integration, log rotation, and an hourly auto-update timer.
+  </Card>
+</CardGroup>
+
+## RTSP stream format
+
+Once a camera is enabled, it is accessible at:
+
+```
+rtsp://<device-ip>:8554/<camera-slug>
+```
+
+Camera slugs are derived deterministically from camera names. For example:
+- "Front Door" → `rtsp://192.168.1.100:8554/front_door`
+- "Warehouse" → `rtsp://192.168.1.100:8554/warehouse`
+- "Parking Lot" → `rtsp://192.168.1.100:8554/parking_lot`
+
+## Who is this for?
+
+EdgeCaster is useful when you have Rhombus cameras deployed but need to feed their video into a system that only understands RTSP — such as:
+
+- Legacy VMS (Video Management Software) platforms
+- NVR (Network Video Recorder) appliances
+- On-premise AI/ML inference systems
+- Video wall controllers
+
+<Note>
+EdgeCaster is an open-source project licensed under Apache 2.0. It is not an official Rhombus Systems product. It uses the [Rhombus API](https://apidocs.rhombussystems.com/) with an Organization API Key.
+</Note>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Install and configure EdgeCaster in minutes
+  </Card>
+  <Card title="Hardware requirements" icon="microchip" href="/hardware-requirements">
+    Verify your Raspberry Pi setup before installing
+  </Card>
+  <Card title="Installation guide" icon="download" href="/deployment/installation">
+    Full step-by-step installation instructions
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/overview">
+    Explore the REST API endpoints
+  </Card>
+</CardGroup>

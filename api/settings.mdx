@@ -1,0 +1,183 @@
+---
+title: "Settings"
+description: "Application settings and configuration endpoints — API key, update schedule, and camera discovery."
+---
+
+---
+
+## GET /api/settings
+
+Returns the current application configuration. Secrets (the raw API key value) are never included in the response.
+
+### Request
+
+No parameters or body required.
+
+```bash
+curl http://edgecaster.local/api/settings
+```
+
+### Response fields
+
+<ResponseField name="hostname" type="string">
+  System hostname of the EdgeCaster device.
+</ResponseField>
+
+<ResponseField name="local_ip" type="string">
+  Primary LAN IP address of the device.
+</ResponseField>
+
+<ResponseField name="api_key_configured" type="boolean" required>
+  `true` if a Rhombus Org API Key has been saved; `false` if the device still needs initial setup.
+</ResponseField>
+
+<ResponseField name="setup_state" type="string" required>
+  Current setup stage. `needs_api_key` or `ready`.
+</ResponseField>
+
+<ResponseField name="max_streams" type="integer" required>
+  Maximum number of concurrent RTSP streams allowed. Default `10`.
+</ResponseField>
+
+<ResponseField name="mediamtx_rtsp_port" type="integer" required>
+  Port on which MediaMTX serves RTSP streams. Default `8554`.
+</ResponseField>
+
+<ResponseField name="auto_update_enabled" type="boolean" required>
+  Whether automatic nightly updates are enabled.
+</ResponseField>
+
+<ResponseField name="update_hour_start" type="integer" required>
+  Start of the auto-update window (0–23, 24-hour clock). Default `2`.
+</ResponseField>
+
+<ResponseField name="update_hour_end" type="integer" required>
+  End of the auto-update window (0–23, 24-hour clock). Default `5`.
+</ResponseField>
+
+### Example response
+
+```json
+{
+  "hostname": "edgecaster",
+  "local_ip": "192.168.1.50",
+  "api_key_configured": true,
+  "setup_state": "ready",
+  "max_streams": 10,
+  "mediamtx_rtsp_port": 8554,
+  "auto_update_enabled": true,
+  "update_hour_start": 2,
+  "update_hour_end": 5
+}
+```
+
+---
+
+## POST /api/settings/api-key
+
+Saves or replaces the Rhombus Org API Key. The key is validated against the Rhombus API before being stored. On success, camera discovery runs automatically.
+
+### Request body
+
+<ParamField body="api_key" type="string" required>
+  Your Rhombus Organisation API Key. Must be a non-empty string. The key is validated by making a live call to the Rhombus API before it is saved.
+</ParamField>
+
+```bash
+curl -X POST http://edgecaster.local/api/settings/api-key \
+  -H "Content-Type: application/json" \
+  -d '{"api_key": "rh-org-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}'
+```
+
+### Response
+
+```json
+{
+  "ok": true
+}
+```
+
+### Error responses
+
+| Status | Condition |
+|--------|----------|
+| `400 Bad Request` | The key is empty, fails Rhombus validation, or the Rhombus API is unreachable. The `detail` field contains a human-readable explanation. |
+
+---
+
+## PUT /api/settings/update-schedule
+
+Configures the automatic update window. EdgeCaster checks for updates hourly via a systemd timer and applies them only during this window.
+
+### Request body
+
+<ParamField body="auto_update_enabled" type="boolean" required>
+  Enable or disable automatic updates entirely.
+</ParamField>
+
+<ParamField body="update_hour_start" type="integer" required>
+  Start hour of the update window (0–23, inclusive).
+</ParamField>
+
+<ParamField body="update_hour_end" type="integer" required>
+  End hour of the update window (0–23, inclusive).
+</ParamField>
+
+```bash
+curl -X PUT http://edgecaster.local/api/settings/update-schedule \
+  -H "Content-Type: application/json" \
+  -d '{"auto_update_enabled": true, "update_hour_start": 2, "update_hour_end": 5}'
+```
+
+### Response
+
+```json
+{
+  "ok": true
+}
+```
+
+### Error responses
+
+| Status | Condition |
+|--------|----------|
+| `400 Bad Request` | Either `update_hour_start` or `update_hour_end` is outside the 0–23 range. |
+
+---
+
+## POST /api/settings/discovery/refresh
+
+Manually triggers a camera discovery sync against the Rhombus API. Useful after adding new cameras to your Rhombus organisation.
+
+### Request
+
+No body required.
+
+```bash
+curl -X POST http://edgecaster.local/api/settings/discovery/refresh
+```
+
+### Response fields
+
+<ResponseField name="ok" type="boolean" required>
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="count" type="integer" required>
+  Number of cameras found during the refresh.
+</ResponseField>
+
+### Example response
+
+```json
+{
+  "ok": true,
+  "count": 6
+}
+```
+
+### Error responses
+
+| Status | Condition |
+|--------|----------|
+| `400 Bad Request` | No API key is configured. Set one with `POST /api/settings/api-key` first. |

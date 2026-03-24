@@ -1,0 +1,162 @@
+---
+title: "Monitoring"
+description: "Monitor EdgeCaster stream health and system status"
+---
+
+EdgeCaster exposes a system status API, a web UI dashboard, and integrates with systemd for real-time service monitoring. This page covers all available monitoring surfaces.
+
+## System Status API
+
+The `GET /api/system/status` endpoint returns a snapshot of system health metrics collected by `health.py`. It is polled by the web UI dashboard and can also be queried directly.
+
+```bash
+curl http://<device-ip>/api/system/status
+```
+
+Example response:
+
+```json
+{
+  "hostname": "edgecaster",
+  "local_ip": "192.168.1.42",
+  "uptime_seconds": 86423.7,
+  "cpu_percent": 34.5,
+  "memory_percent": 41.2,
+  "total_cameras": 8,
+  "active_streams": 3,
+  "max_streams": 10
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `hostname` | System hostname (default: `edgecaster`) |
+| `local_ip` | Primary LAN IP address of the device |
+| `uptime_seconds` | Seconds since the EdgeCaster backend process started |
+| `cpu_percent` | Current CPU utilization across all cores (0.5s sample) |
+| `memory_percent` | Percentage of RAM in use |
+| `total_cameras` | Number of cameras discovered from the Rhombus API |
+| `active_streams` | Streams currently in `starting`, `running`, or `restarting` state |
+| `max_streams` | Configured stream limit (default: 10) |
+
+<Note>
+`uptime_seconds` reflects how long the backend process has been running, not how long the device has been powered on. It resets on service restart.
+</Note>
+
+## Web UI Dashboard
+
+Open `http://<device-ip>` in a browser to access the dashboard. The dashboard shows:
+
+- A card for each discovered camera with its current stream state badge
+- Overall active stream count vs. the configured maximum
+- Toggle switches to enable or disable individual streams
+- A Settings page for API key configuration and update scheduling
+
+Stream state badges update in real time as the backend reports state changes. No page refresh is required.
+
+## Systemd Service Status
+
+EdgeCaster runs as two systemd services. Use these commands to check their status:
+
+```bash
+# EdgeCaster backend (API + stream orchestration)
+sudo systemctl status edgecaster
+
+# MediaMTX RTSP server
+sudo systemctl status mediamtx
+
+# Auto-update timer
+sudo systemctl status edgecaster-update.timer
+```
+
+Expected healthy output for `edgecaster`:
+
+```
+● edgecaster.service - EdgeCaster - Rhombus SRS to RTSP Gateway
+     Loaded: loaded (/etc/systemd/system/edgecaster.service; enabled)
+     Active: active (running) since ...
+   Main PID: 1234 (uvicorn)
+```
+
+Expected healthy output for `mediamtx`:
+
+```
+● mediamtx.service - MediaMTX RTSP Server
+     Loaded: loaded (/etc/systemd/system/mediamtx.service; enabled)
+     Active: active (running) since ...
+   Main PID: 1235 (mediamtx)
+```
+
+<Tip>
+If either service shows `failed` or `inactive`, restart it with `sudo systemctl restart <service-name>` and check logs with `journalctl -u <service-name> -n 50`.
+</Tip>
+
+## Stream States
+
+Each camera stream is tracked as a `ManagedStream` object with one of five states:
+
+| State | Meaning |
+|-------|---------|
+| `starting` | Stream was just enabled; FFmpeg process is being launched |
+| `running` | FFmpeg process is active and publishing to MediaMTX |
+| `stopped` | Stream was manually disabled by the user |
+| `failed` | FFmpeg exited with an error and retries are exhausted; entering backoff |
+| `restarting` | FFmpeg exited unexpectedly; a retry is in progress |
+
+A stream in `failed` state is not permanently stopped. EdgeCaster will automatically retry after a 5-minute backoff period and continue retrying indefinitely.
+
+## Automatic Health Check Loop
+
+In addition to per-stream process monitoring, the stream manager runs a background health check loop every 60 seconds (`HEALTH_CHECK_INTERVAL = 60` in `stream_manager.py`). This loop:
+
+1. Iterates over all streams currently in `running` state
+2. Checks whether the underlying FFmpeg subprocess has unexpectedly exited (i.e. `process.returncode is not None`)
+3. If a dead process is found, forces the stream into `restarting` state and re-launches it
+
+This provides a backstop for cases where the per-stream monitor task itself fails to detect an exit, or where a process dies silently.
+
+```
+Health check fires every 60s
+  └─ For each stream in state=running
+       └─ Is process.returncode set?  →  Yes: force restart
+```
+
+## Retry and Recovery Behavior
+
+When FFmpeg exits with a non-zero return code, the stream monitor applies the following logic:
+
+- Wait 5 seconds (`RETRY_DELAY_SECONDS = 5`)
+- Re-request a Secure Raw Stream URL from Rhombus (token may have expired)
+- Relaunch FFmpeg
+- After 10 consecutive failures (`MAX_RETRY_ATTEMPTS = 10`), enter a 5-minute backoff (`RECOVERY_BACKOFF_SECONDS = 300`)
+- After backoff, reset the retry counter and start the cycle again — indefinitely
+
+<Info>
+EdgeCaster never permanently gives up on a stream. On a 24/7 device, the recovery cycle continues until the underlying problem (camera offline, API issue, etc.) is resolved.
+</Info>
+
+## Verifying RTSP Streams with VLC
+
+To confirm a stream is working end-to-end, open it with VLC:
+
+```bash
+vlc rtsp://<device-ip>:8554/<slug>
+```
+
+For example, if your camera slug is `front_door`:
+
+```bash
+vlc rtsp://192.168.1.42:8554/front_door
+```
+
+You can also use the VLC GUI: **Media → Open Network Stream** and enter the RTSP URL.
+
+<Note>
+The stream slug is derived from the camera name (lowercased, spaces replaced with underscores). The exact slug for each camera is shown in the web UI and returned by `GET /api/streams`.
+</Note>
+
+If VLC shows a blank screen or an error:
+1. Confirm the stream shows `running` in the web UI
+2. Verify port 8554 is not blocked by a firewall (`sudo ufw status`)
+3. Check MediaMTX is running (`sudo systemctl status mediamtx`)
+4. Review logs: `journalctl -u edgecaster -f`

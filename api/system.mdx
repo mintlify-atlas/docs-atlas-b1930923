@@ -1,0 +1,65 @@
+---
+title: "System status"
+description: "System health and metrics endpoint — CPU, memory, uptime, and stream counts."
+---
+
+## GET /api/system/status
+
+Returns a snapshot of the device's current health metrics. Useful for monitoring dashboards, health checks, and diagnosing performance issues.
+
+### Request
+
+No parameters or body required.
+
+```bash
+curl http://edgecaster.local/api/system/status
+```
+
+### Response fields
+
+<ResponseField name="hostname" type="string" required>
+  System hostname of the EdgeCaster device.
+</ResponseField>
+
+<ResponseField name="local_ip" type="string" required>
+  Primary LAN IP address of the device.
+</ResponseField>
+
+<ResponseField name="uptime_seconds" type="number" required>
+  Seconds since the EdgeCaster backend process started. Resets on service restart.
+</ResponseField>
+
+<ResponseField name="cpu_percent" type="number" required>
+  Current CPU utilisation as a percentage (0–100). Sampled over a 0.5-second interval.
+</ResponseField>
+
+<ResponseField name="memory_percent" type="number" required>
+  Current RAM utilisation as a percentage (0–100).
+</ResponseField>
+
+<ResponseField name="total_cameras" type="integer" required>
+  Total number of cameras in the discovery cache.
+</ResponseField>
+
+<ResponseField name="active_streams" type="integer" required>
+  Number of RTSP streams currently in `running` or `starting` state.
+</ResponseField>
+
+<ResponseField name="max_streams" type="integer" required>
+  Configured maximum number of concurrent streams. Default `10`.
+</ResponseField>
+
+### Example response
+
+```json
+{
+  "hostname": "edgecaster",
+  "local_ip": "192.168.1.50",
+  "uptime_seconds": 86423.7,
+  "cpu_percent": 14.2,
+  "memory_percent": 38.5,
+  "total_cameras": 8,
+  "active_streams": 3,
+  "max_streams": 10
+}
+```

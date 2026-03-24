@@ -1,0 +1,104 @@
+---
+title: "Auto-updates"
+description: "How EdgeCaster keeps itself updated automatically"
+---
+
+EdgeCaster ships with a built-in auto-update mechanism based on a systemd timer and a git fast-forward pull. Updates only apply during a configurable nightly window, so they do not interrupt daytime use.
+
+## How it works
+
+1. The `edgecaster-update.timer` fires **every hour** with a randomized delay of up to 5 minutes.
+2. The timer triggers `edgecaster-update.service`, which runs `scripts/edgecaster-update.sh` as root.
+3. The script reads `auto_update_enabled` and the update window from `/etc/edgecaster/config.yaml`.
+4. If the current hour falls **outside** the configured window, the script exits immediately without doing anything.
+5. If the current hour is **inside** the window, the script checks for new commits on the `main` branch.
+6. If new commits exist, it performs a `git pull --ff-only`, updates Python dependencies, rebuilds the frontend, and restarts both services.
+
+<Note>
+  Auto-updates require a git-based installation. EdgeCaster must be running from a directory that contains a `.git` folder (typically `/opt/edgecaster`). The update script checks for this and exits silently if the directory is not a git repository.
+</Note>
+
+## Configuration
+
+The update schedule is stored in `/etc/edgecaster/config.yaml`:
+
+```yaml
+# Auto-update settings
+auto_update_enabled: true
+update_hour_start: 2   # 2:00 AM
+update_hour_end: 5     # 5:00 AM
+```
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `auto_update_enabled` | boolean | `true` | Set to `false` to disable all automatic updates |
+| `update_hour_start` | integer | `2` | First hour of the update window (24-hour clock) |
+| `update_hour_end` | integer | `5` | Hour at which the window closes (exclusive) |
+
+The window supports overnight ranges. For example, `update_hour_start: 22` with `update_hour_end: 4` will allow updates from 10 PM through 3:59 AM.
+
+You can also change the update window from the **Settings** page in the web UI without editing the file directly.
+
+## Checking timer status
+
+```bash
+systemctl status edgecaster-update.timer
+```
+
+The output shows the last time the timer fired and when it will next fire:
+
+```
+● edgecaster-update.timer - EdgeCaster Hourly Update Check
+     Loaded: loaded (/etc/systemd/system/edgecaster-update.timer; enabled)
+     Active: active (waiting)
+    Trigger: Mon 2026-03-25 02:00:00 UTC; 3h 12min left
+```
+
+## Update log
+
+The update script appends to a log file at `/var/log/edgecaster/update.log`:
+
+```bash
+cat /var/log/edgecaster/update.log
+```
+
+A successful update looks like:
+
+```
+2026-03-24 02:01:43 New updates available, starting update...
+2026-03-24 02:01:47 Updating Python dependencies...
+2026-03-24 02:02:05 Rebuilding frontend...
+2026-03-24 02:02:38 Restarting services...
+2026-03-24 02:02:41 Update completed successfully.
+```
+
+You can also query the systemd journal for update service runs:
+
+```bash
+journalctl -u edgecaster-update -n 50
+```
+
+## Triggering a manual update
+
+To apply updates immediately without waiting for the next timer window:
+
+```bash
+sudo bash scripts/edgecaster-update.sh
+```
+
+The script runs from the install directory at `/opt/edgecaster`. When run manually, the hour-window check still applies. To bypass it, temporarily widen the window in the config or disable the check by setting `auto_update_enabled: false` and running the script directly.
+
+## Disabling auto-updates
+
+To turn off automatic updates entirely, set `auto_update_enabled` to `false` in `/etc/edgecaster/config.yaml`:
+
+```yaml
+auto_update_enabled: false
+```
+
+You can also stop and disable the timer unit:
+
+```bash
+sudo systemctl stop edgecaster-update.timer
+sudo systemctl disable edgecaster-update.timer
+```

@@ -1,0 +1,124 @@
+---
+title: "Local development setup"
+description: "Set up a local development environment for EdgeCaster"
+---
+
+EdgeCaster consists of a Python/FastAPI backend and a React/TypeScript frontend. Both can run independently in development mode. The backend auto-detects `dev` vs `production` mode based on the `EDGECASTER_ENV` environment variable — in dev mode it reads and writes files under `backend/data/` instead of the production paths under `/etc/edgecaster/`.
+
+## Prerequisites
+
+- Python 3.11 or newer
+- Node.js 18 or newer (for the frontend)
+- FFmpeg installed and on `$PATH` (required to actually launch streams)
+- Git
+
+## Setup
+
+<Tabs>
+  <Tab title="Backend">
+    <Steps>
+      <Step title="Create a virtual environment">
+        Run the following from the repo root:
+
+        ```bash
+        python3 -m venv venv
+        source venv/bin/activate
+        ```
+      </Step>
+
+      <Step title="Install Python dependencies">
+        ```bash
+        pip install -r requirements.txt
+        ```
+
+        To also install development dependencies (pytest, ruff):
+
+        ```bash
+        pip install -e ".[dev]"
+        ```
+      </Step>
+
+      <Step title="Start the development server">
+        ```bash
+        cd backend && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+        ```
+
+        The `--reload` flag enables automatic restart on code changes. The API will be available at `http://localhost:8000`.
+      </Step>
+    </Steps>
+
+    <Note>
+      Python imports use fully-qualified paths from the repo root — for example `from backend.app.config import load_config`. The backend is **not** an installable package. Always run `uvicorn` with the working directory set to the repo root (i.e. `cd backend && uvicorn app.main:app ...` from within the repo root, or run `uvicorn backend.app.main:app ...` from the root directly).
+    </Note>
+  </Tab>
+
+  <Tab title="Frontend">
+    <Steps>
+      <Step title="Install Node dependencies">
+        ```bash
+        cd frontend && npm install
+        ```
+      </Step>
+
+      <Step title="Start the dev server">
+        ```bash
+        npm run dev
+        ```
+
+        The Vite dev server starts on `http://localhost:5173`. All requests to `/api/*` are proxied to the backend at `http://localhost:8000`, so the frontend and backend can run simultaneously without any CORS issues in development.
+      </Step>
+    </Steps>
+  </Tab>
+</Tabs>
+
+## Dev paths vs production paths
+
+The config loader in `backend/app/config.py` automatically selects file paths based on the `EDGECASTER_ENV` environment variable:
+
+| What | Dev path (`EDGECASTER_ENV != "production"`) | Production path |
+|------|---------------------------------------------|-----------------|
+| Config YAML | `backend/data/config.yaml` | `/etc/edgecaster/config.yaml` |
+| State JSON | `backend/data/state.json` | `/var/lib/edgecaster/state.json` |
+| Log directory | `backend/data/logs/` | `/var/log/edgecaster/` |
+
+In dev mode all these paths are created automatically under `backend/data/` on first run, so no manual directory setup is needed.
+
+To explicitly run in production mode locally (e.g. to test against `/etc/edgecaster/`):
+
+```bash
+EDGECASTER_ENV=production uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+## Build the frontend for production
+
+```bash
+cd frontend && npm run build
+```
+
+Output is written to `frontend/dist/`. In production the FastAPI app serves these static files directly — the `main.py` lifespan mounts `frontend/dist/` at `/` if the directory exists.
+
+## Linting
+
+<Tabs>
+  <Tab title="Backend (ruff)">
+    ```bash
+    ruff check backend/
+    ```
+
+    Ruff is configured in `pyproject.toml` targeting Python 3.11 with `line-length = 100`. Rules enabled: `E`, `F`, `I`, `N`, `W`, `UP`.
+
+    To auto-fix safe issues:
+
+    ```bash
+    ruff check backend/ --fix
+    ```
+  </Tab>
+
+  <Tab title="Frontend (TypeScript)">
+    ```bash
+    cd frontend && npx tsc --noEmit
+    ```
+
+    This runs the TypeScript compiler in type-check-only mode without emitting any files. The `build` script (`tsc && vite build`) also type-checks as part of a production build.
+  </Tab>
+</Tabs>

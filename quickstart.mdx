@@ -1,80 +1,106 @@
 ---
 title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+description: "Get EdgeCaster running and serving RTSP streams in under 10 minutes."
 ---
 
-## Get started in three steps
+This guide walks you through installing EdgeCaster on a Raspberry Pi 5, connecting it to your Rhombus organization, and streaming a camera to a VMS or NVR.
 
-Get your documentation site running locally and make your first customization.
+<Info>
+Before starting, make sure you have a Raspberry Pi 5 running Ubuntu Server 24.04 with internet access. See [hardware requirements](/hardware-requirements) for the full list.
+</Info>
 
-### Step 1: Set up your local environment
+<Steps>
+  <Step title="Clone and install">
+    SSH into your Raspberry Pi and run the installer:
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+    ```bash
+    git clone https://github.com/RhombusSystems/edgecaster-stream-converter.git
+    cd edgecaster-stream-converter
+    sudo bash scripts/install.sh
+    ```
 
-### Step 2: Deploy your changes
+    The installer handles everything: FFmpeg, MediaMTX, Python, Node.js, Nginx, the edgecaster system user, all directories, frontend build, and systemd services. It is safe to re-run.
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    When complete, EdgeCaster will be running and accessible on port 80.
+  </Step>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+  <Step title="Open the web UI">
+    Open a browser on your local network and navigate to:
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+    ```
+    http://edgecaster.local
+    ```
 
-### Step 3: Go live
+    or use the device's IP address directly:
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    ```
+    http://<device-ip>
+    ```
 
-## Next steps
+    You'll see the first-run setup screen asking for your Rhombus Org API Key.
+  </Step>
 
-Now that you have your docs running, explore these key features:
+  <Step title="Enter your Rhombus Org API Key">
+    Your Org API Key can be found in the [Rhombus Console](https://console.rhombussystems.com) under **Settings → API Keys**.
+
+    Enter the key and click **Save**. EdgeCaster will immediately contact the Rhombus API to discover all cameras in your organization.
+
+    <Warning>
+      Keep your API key secure. It is stored in `/etc/edgecaster/config.yaml` (readable only by the `edgecaster` system user) and is never logged or exposed in API responses.
+    </Warning>
+  </Step>
+
+  <Step title="Enable cameras">
+    The camera list shows all discovered cameras with their name, location, and online status.
+
+    Toggle the switch next to any camera to start its RTSP stream. EdgeCaster will:
+    1. Request a Secure Raw Stream URL from the Rhombus API
+    2. Start an FFmpeg process to pull the HTTPS H264 stream
+    3. Publish it to MediaMTX as a named RTSP path
+
+    You can enable up to **10 cameras** concurrently.
+
+    <Note>
+      The RTSP path slug is derived from the camera name. "Front Door" becomes `front_door`, "Warehouse Bay 2" becomes `warehouse_bay_2`.
+    </Note>
+  </Step>
+
+  <Step title="Connect your VMS or NVR">
+    Once a camera shows **running**, point your VMS, NVR, or video application to:
+
+    ```
+    rtsp://<device-ip>:8554/<camera-slug>
+    ```
+
+    Real examples based on camera names:
+
+    ```
+    rtsp://192.168.1.100:8554/front_door
+    rtsp://192.168.1.100:8554/warehouse
+    rtsp://192.168.1.100:8554/parking_lot
+    ```
+
+    Test playback with VLC:
+
+    ```bash
+    vlc rtsp://192.168.1.100:8554/front_door
+    ```
+  </Step>
+</Steps>
+
+## What's next
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Full installation guide" icon="download" href="/deployment/installation">
+    Detailed walkthrough of everything the installer does
+  </Card>
+  <Card title="First-run setup" icon="sliders" href="/usage/first-run">
+    More detail on the setup wizard and first-run configuration
+  </Card>
+  <Card title="Managing streams" icon="video" href="/usage/managing-streams">
+    Stream states, retry logic, and disable flow
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/operations/troubleshooting">
+    Fix common problems with cameras and RTSP streams
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

@@ -1,0 +1,208 @@
+---
+title: "Testing"
+description: "Running and writing tests for EdgeCaster"
+---
+
+EdgeCaster uses [pytest](https://docs.pytest.org/) with [pytest-asyncio](https://pytest-asyncio.readthedocs.io/) for backend tests. Tests live in `backend/tests/` and are discovered automatically based on the `testpaths` setting in `pyproject.toml`.
+
+## Install test dependencies
+
+```bash
+pip install pytest pytest-asyncio
+```
+
+Or install the project's `dev` extras (which also includes `ruff`):
+
+```bash
+pip install -e ".[dev]"
+```
+
+## Running tests
+
+```bash
+# Run all tests
+python -m pytest backend/tests/ -v
+
+# Run a single test file
+python -m pytest backend/tests/test_slugify.py -v
+
+# Run a single test function
+python -m pytest backend/tests/test_slugify.py::test_basic_name -v
+```
+
+<Note>
+  `asyncio_mode = "auto"` is set in `pyproject.toml`, so all `async def` test functions are automatically treated as asyncio tests — no need to add the `@pytest.mark.asyncio` decorator manually (though it is harmless if present).
+</Note>
+
+## Test modules
+
+### `test_slugify.py` — RTSP path slug generation
+
+Tests `backend/app/utils/slugify.py`, which normalises camera names into URL-safe RTSP path segments. All tests are synchronous and cover edge cases including unicode normalisation, special characters, empty strings, and determinism.
+
+```python
+from backend.app.utils.slugify import slugify
+
+def test_basic_name():
+    assert slugify("Front Door") == "front_door"
+
+def test_parentheses():
+    assert slugify("Warehouse (East)") == "warehouse_east"
+
+def test_special_characters():
+    assert slugify("Loading Dock #2") == "loading_dock_2"
+
+def test_mixed_case():
+    assert slugify("PARKING Garage Level-3") == "parking_garage_level_3"
+
+def test_empty_string():
+    assert slugify("") == "unnamed"
+
+def test_only_special():
+    assert slugify("###") == "unnamed"
+
+def test_deterministic():
+    """Same input always produces same output."""
+    name = "Conference Room B"
+    assert slugify(name) == slugify(name)
+```
+
+### `test_state_store.py` — JSON persistence
+
+Tests `backend/app/services/state_store.py` using `tempfile.TemporaryDirectory` so each test gets an isolated, real filesystem path. Covers:
+
+- Basic get/set/delete
+- Default values for missing keys
+- Persistence across `StateStore` instances (reload from disk)
+- The `get_enabled_cameras()` / `set_enabled_cameras()` helpers
+- The `get_slug_map()` / `set_slug_map()` helpers
+- Graceful recovery from a corrupted JSON file
+
+```python
+from pathlib import Path
+import tempfile
+from backend.app.services.state_store import StateStore
+
+def test_persistence():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = Path(tmpdir)
+
+        store1 = StateStore(path)
+        store1.set("persistent", True)
+
+        # Reload from disk
+        store2 = StateStore(path)
+        assert store2.get("persistent") is True
+
+def test_corrupted_file_recovery():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = Path(tmpdir) / "state.json"
+        path.write_text("not valid json{{{")
+
+        store = StateStore(Path(tmpdir))
+        assert store.get("anything") is None
+        # Should still work after recovery
+        store.set("key", "value")
+        assert store.get("key") == "value"
+```
+
+### `test_stream_manager.py` — FFmpeg orchestration logic
+
+Tests `backend/app/services/stream_manager.py` using pytest fixtures and `unittest.mock`. FFmpeg subprocesses are mocked via `patch("asyncio.create_subprocess_exec")` so no actual FFmpeg binary is required.
+
+Fixtures:
+
+```python
+@pytest.fixture
+def tmp_state():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        yield StateStore(Path(tmpdir))
+
+@pytest.fixture
+def config():
+    return EdgeCasterConfig(
+        max_streams=3,
+        mediamtx_rtsp_port=8554,
+        mediamtx_host="127.0.0.1",
+    )
+
+@pytest.fixture
+def manager(config, tmp_state):
+    return StreamManager(config, tmp_state)
+```
+
+Selected tests:
+
+```python
+@pytest.mark.asyncio
+async def test_stream_limit_enforcement(manager, tmp_state):
+    """Attempting to enable more streams than max_streams should raise."""
+    tmp_state.set_enabled_cameras({"cam1", "cam2", "cam3"})
+    mock_client = AsyncMock()
+    manager.set_rhombus_client(mock_client)
+
+    with pytest.raises(ValueError, match="Maximum of 3 concurrent streams"):
+        await manager.start_stream("cam4", "Camera 4")
+
+
+@pytest.mark.asyncio
+async def test_start_stream_persists_enabled(manager, tmp_state):
+    """Starting a stream should persist the camera UUID to enabled set."""
+    mock_client = AsyncMock()
+    mock_client.create_raw_stream = AsyncMock(return_value="http://fake/video")
+    manager.set_rhombus_client(mock_client)
+
+    with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_proc:
+        mock_process = AsyncMock()
+        mock_process.wait = AsyncMock(return_value=0)
+        mock_process.stderr = None
+        mock_proc.return_value = mock_process
+
+        await manager.start_stream("cam1", "Front Door")
+
+    assert "cam1" in tmp_state.get_enabled_cameras()
+    assert tmp_state.get_slug_map().get("cam1") == "front_door"
+
+
+@pytest.mark.asyncio
+async def test_stop_stream_removes_from_enabled(manager, tmp_state):
+    """Stopping a stream should remove it from the enabled set."""
+    tmp_state.set_enabled_cameras({"cam1"})
+    tmp_state.set_slug_map({"cam1": "front_door"})
+
+    await manager.stop_stream("cam1")
+
+    assert "cam1" not in tmp_state.get_enabled_cameras()
+```
+
+## Writing new tests
+
+Follow the patterns already established in the test suite:
+
+- Use `tempfile.TemporaryDirectory` for any test that touches the filesystem — never write to `backend/data/` from tests.
+- Mock `asyncio.create_subprocess_exec` when testing `StreamManager` to avoid requiring a real FFmpeg binary.
+- Use `AsyncMock` from `unittest.mock` for async Rhombus API methods.
+- Keep fixtures in the same file unless they are shared across multiple test files (in which case add them to `conftest.py`).
+
+## Frontend type checking
+
+There are no frontend unit tests currently. TypeScript type correctness is verified with:
+
+```bash
+cd frontend && npx tsc --noEmit
+```
+
+## Linting
+
+```bash
+# Python — check for errors and style issues
+ruff check backend/
+
+# Python — auto-fix safe issues
+ruff check backend/ --fix
+
+# Frontend — TypeScript type check
+cd frontend && npx tsc --noEmit
+```
+
+Ruff is configured in `pyproject.toml` with `target-version = "py311"`, `line-length = 100`, and rule sets `E`, `F`, `I`, `N`, `W`, `UP`.

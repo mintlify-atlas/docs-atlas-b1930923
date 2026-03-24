@@ -1,0 +1,193 @@
+---
+title: "MediaMTX configuration"
+description: "How EdgeCaster configures MediaMTX as the RTSP server, including the bundled config file and how to add authentication"
+---
+
+[MediaMTX](https://github.com/bluenviron/mediamtx) is the open-source RTSP server that EdgeCaster uses to expose camera streams on the local network. The EdgeCaster installer places the MediaMTX binary at `/usr/local/bin/mediamtx` and runs it as a systemd service using the config file at `/etc/edgecaster/mediamtx.yml`.
+
+## How EdgeCaster uses MediaMTX
+
+```
+Rhombus API  →  EdgeCaster backend  →  FFmpeg subprocess  →  MediaMTX  →  VMS / NVR
+                (creates raw stream)    (RTSP publish)       (RTSP serve)   (RTSP consume)
+```
+
+For each enabled camera, the backend spawns an FFmpeg process that:
+
+1. Pulls the Rhombus Secure Raw Stream over HTTPS
+2. Copies the H.264 stream (no transcoding) into an RTSP publish connection to MediaMTX on localhost
+3. MediaMTX then makes that stream available to any RTSP client on the network
+
+## Bundled configuration file
+
+The file installed to `/etc/edgecaster/mediamtx.yml` is minimal by design. Only the features required by EdgeCaster are enabled; RTMP, HLS, WebRTC, and SRT are all explicitly disabled to reduce the attack surface and resource usage.
+
+```yaml
+# /etc/edgecaster/mediamtx.yml
+# Documentation: https://github.com/bluenviron/mediamtx
+
+###############################################
+# General settings
+
+logLevel: info
+logDestinations: [stdout]
+
+###############################################
+# RTSP server
+
+rtsp: yes
+rtspAddress: :8554
+protocols: [tcp, udp]
+
+# Allow publishing from localhost (FFmpeg)
+# Allow reading from any source (VMS/NVR clients)
+
+###############################################
+# RTMP server (disabled for EdgeCaster)
+
+rtmp: no
+
+###############################################
+# HLS server (disabled for EdgeCaster)
+
+hls: no
+
+###############################################
+# WebRTC server (disabled for EdgeCaster)
+
+webrtc: no
+
+###############################################
+# SRT server (disabled for EdgeCaster)
+
+srt: no
+
+###############################################
+# Path defaults
+
+pathDefaults:
+  source: publisher
+  record: no
+
+# Dynamic paths: any path name FFmpeg publishes to will be auto-created
+paths:
+  all_others:
+```
+
+<Note>
+The `paths: all_others:` entry (with no sub-keys) tells MediaMTX to accept any path name dynamically. EdgeCaster relies on this so that new camera slugs can be published without updating the MediaMTX config file.
+</Note>
+
+## Stream URL formats
+
+### FFmpeg publish URL (internal)
+
+When the backend enables a camera it constructs a publish URL using the `mediamtx_host` and `mediamtx_rtsp_port` values from `config.yaml`:
+
+```
+rtsp://127.0.0.1:8554/<slug>
+```
+
+The `<slug>` is a URL-safe string derived from the camera display name (for example, `front_door` or `warehouse_north`). Slug generation is handled by `backend/app/utils/slugify.py` and the mapping is persisted in `state.json`.
+
+Example FFmpeg invocation (simplified):
+
+```bash
+ffmpeg -i "https://<raw-stream-url>" \
+  -c copy \
+  -f rtsp \
+  rtsp://127.0.0.1:8554/front_door
+```
+
+### RTSP playback URL (external)
+
+Clients — VMS, NVR, VLC, or any RTSP-capable application — connect using the device's LAN IP:
+
+```
+rtsp://<device-ip>:8554/<slug>
+```
+
+For example:
+
+```
+rtsp://192.168.1.50:8554/front_door
+rtsp://192.168.1.50:8554/warehouse_north
+rtsp://192.168.1.50:8554/parking_lot_east
+```
+
+The full list of active slugs and their camera UUIDs is visible in the web UI and stored in `/var/lib/edgecaster/state.json`.
+
+## Systemd service
+
+MediaMTX is managed by the `mediamtx.service` unit. It starts before `edgecaster.service` and runs as the `edgecaster` system user:
+
+```ini
+[Unit]
+Description=MediaMTX RTSP Server
+After=network-online.target
+
+[Service]
+Type=simple
+User=edgecaster
+ExecStart=/usr/local/bin/mediamtx /etc/edgecaster/mediamtx.yml
+Restart=on-failure
+RestartSec=3
+```
+
+Check its status with:
+
+```bash
+sudo systemctl status mediamtx
+journalctl -u mediamtx -f
+```
+
+## Adding RTSP authentication
+
+<Warning>
+RTSP streams are **unauthenticated** in v1. Any client that can reach port 8554 can view streams. Restrict access via firewall or VLAN until authentication is configured.
+</Warning>
+
+MediaMTX supports per-path or global publisher and reader credentials. To add authentication, edit `/etc/edgecaster/mediamtx.yml` and add credentials to `pathDefaults`:
+
+```yaml
+pathDefaults:
+  source: publisher
+  record: no
+
+  # Restrict who can publish (FFmpeg internal — use a strong password)
+  publishUser: edgecaster
+  publishPass: <strong-publish-password>
+
+  # Restrict who can read (VMS/NVR clients)
+  readUser: viewer
+  readPass: <strong-read-password>
+```
+
+After editing the file, restart MediaMTX:
+
+```bash
+sudo systemctl restart mediamtx
+```
+
+You must also update the FFmpeg publish URL used by the backend. Add the credentials to the `mediamtx_host` value in `config.yaml` or extend the backend's stream manager to include them in the publish URL. This is a planned enhancement for a future EdgeCaster release.
+
+<Info>
+For the full MediaMTX authentication reference, see the [MediaMTX documentation](https://github.com/bluenviron/mediamtx#authentication).
+</Info>
+
+## Configuration reference
+
+| Field | Value | Description |
+|-------|-------|-------------|
+| `logLevel` | `info` | MediaMTX internal log verbosity |
+| `logDestinations` | `[stdout]` | Log output captured by systemd journal |
+| `rtsp` | `yes` | RTSP server enabled |
+| `rtspAddress` | `:8554` | Listen address — all interfaces, port 8554 |
+| `protocols` | `[tcp, udp]` | Both TCP (interleaved) and UDP transport modes enabled |
+| `rtmp` | `no` | RTMP disabled |
+| `hls` | `no` | HLS disabled |
+| `webrtc` | `no` | WebRTC disabled |
+| `srt` | `no` | SRT disabled |
+| `pathDefaults.source` | `publisher` | Paths are created on-demand when FFmpeg publishes |
+| `pathDefaults.record` | `no` | On-disk recording disabled |
+| `paths.all_others` | _(empty)_ | Accept any path name dynamically |

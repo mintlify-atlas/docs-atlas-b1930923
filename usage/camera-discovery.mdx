@@ -1,0 +1,98 @@
+---
+title: "Camera discovery"
+description: "How EdgeCaster discovers cameras from your Rhombus organization and keeps the list current."
+---
+
+EdgeCaster maintains an in-memory list of cameras fetched from the Rhombus API. Discovery runs automatically when the API key is first saved, when the service starts (if a key is already configured), and whenever you trigger a manual refresh.
+
+## How discovery works
+
+The `DiscoveryService` calls the Rhombus API and caches the results in memory:
+
+```
+POST https://api2.rhombussystems.com/api/camera/getMinimalCameraStateList
+```
+
+Authentication uses Rhombus API token headers:
+
+```
+x-auth-scheme: api-token
+x-auth-apikey: <your-org-api-key>
+```
+
+The response is mapped to an internal `Camera` model and held in memory for the lifetime of the process. No camera data is written to disk.
+
+## Discovered camera data
+
+Each discovered camera exposes the following fields:
+
+```json
+{
+  "uuid": "a1b2c3d4-...",
+  "name": "Front Door",
+  "location_uuid": "loc-uuid-...",
+  "location_name": "Main Building",
+  "status": "online",
+  "lan_addresses": ["192.168.1.45"],
+  "firmware_version": "2.300.2",
+  "serial_number": "RCM-E1-XXXXXX"
+}
+```
+
+| Field | Description |
+|---|---|
+| `uuid` | Unique camera identifier used in all API calls |
+| `name` | Human-readable camera name as set in Rhombus Console |
+| `location_name` | Location group the camera belongs to |
+| `status` | Connectivity status: `online`, `degraded`, `offline`, or `unknown` |
+| `lan_addresses` | LAN IP addresses reported by Rhombus |
+| `firmware_version` | Camera firmware version |
+| `serial_number` | Hardware serial number |
+
+Camera status is mapped from the Rhombus `DeviceStatusEnum`:
+
+| Rhombus value | EdgeCaster status |
+|---|---|
+| `GREEN` | `online` |
+| `YELLOW` | `degraded` |
+| `ORANGE` | `degraded` |
+| `RED` | `offline` |
+| anything else | `unknown` |
+
+## Refreshing the camera list
+
+Discovery results are cached in memory and are **not** automatically refreshed on a schedule. To pick up newly added or renamed cameras, trigger a manual refresh.
+
+**From the web UI:** Open the **Cameras** page and click the **Refresh** button in the toolbar.
+
+**From the API:**
+
+```bash
+POST /api/settings/discovery/refresh
+```
+
+Example response:
+
+```json
+{ "ok": true, "count": 12 }
+```
+
+The `count` field reflects the total number of cameras found after the refresh.
+
+<Info>
+  Refreshing discovery does not affect running streams. Cameras that already have streams enabled continue streaming uninterrupted.
+</Info>
+
+## Troubleshooting: no cameras found
+
+**Verify the API key.** Go to **Settings** in the web UI and confirm that an API key is configured. If you recently rotated the key in the Rhombus Console, update it in EdgeCaster settings.
+
+**Check network access.** The EdgeCaster device must be able to reach `api2.rhombussystems.com` over HTTPS (port 443). If the device is on a restricted network, ensure outbound HTTPS is permitted to that hostname.
+
+**Check camera visibility.** The API key must belong to an organization that has cameras. Verify in the Rhombus Console that cameras appear under your organization.
+
+**Review logs.** Discovery errors are logged at the `WARNING` level. On a production install:
+
+```bash
+journalctl -u edgecaster -n 100
+```

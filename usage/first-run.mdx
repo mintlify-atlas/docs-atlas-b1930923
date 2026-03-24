@@ -1,0 +1,77 @@
+---
+title: "First-run setup"
+description: "Configure EdgeCaster for the first time by entering your Rhombus Org API Key."
+---
+
+When you power on EdgeCaster for the first time, the web UI detects that no API key is configured and presents a setup form before giving you access to the rest of the interface.
+
+<Warning>
+  EdgeCaster has no built-in HTTP authentication. Deploy it only on trusted, isolated networks. Anyone who can reach the device IP can control streams and update the API key.
+</Warning>
+
+## Setup flow
+
+<Steps>
+  <Step title="Open the web UI">
+    Navigate to the EdgeCaster interface in your browser:
+
+    ```
+    http://edgecaster.local
+    ```
+
+    or, if mDNS is not available on your network:
+
+    ```
+    http://<device-ip>
+    ```
+
+    The frontend calls `GET /api/auth/status` on every load to check whether an API key has been saved. If the response is `{ "setup_state": "needs_api_key" }`, the setup form is shown instead of the main interface. Once the key is saved the response changes to `{ "setup_state": "ready" }` and the full UI becomes accessible.
+  </Step>
+
+  <Step title="Locate your Rhombus Org API Key">
+    The setup form asks for your **Rhombus Organization API Key**. This is an org-level credential (not a user password) that grants read access to your camera list and allows EdgeCaster to create and delete Secure Raw Streams on your behalf.
+
+    To find it:
+    1. Log in to the [Rhombus Console](https://console.rhombussystems.com).
+    2. Go to **Settings → Integrations → API**.
+    3. Copy the key labeled **Org API Key**.
+
+    <Info>
+      The key is stored in plaintext in the EdgeCaster config file at `/etc/edgecaster/config.yaml` (production) or `backend/data/config.yaml` (development). Treat it with the same care as a password.
+    </Info>
+  </Step>
+
+  <Step title="Enter the API key and save">
+    Paste the key into the **Rhombus Org API Key** field and click **Save API Key**.
+
+    EdgeCaster validates the key by making a test call to the Rhombus API before saving it. The button label changes to **Validating...** during this check. If the key is invalid or the device cannot reach `api2.rhombussystems.com`, an error message is shown and nothing is saved.
+
+    On success, the backend:
+    1. Saves the key to `config.yaml`.
+    2. Initializes the Rhombus API client.
+    3. Runs an automatic camera discovery against `POST /api/camera/getMinimalCameraStateList`.
+  </Step>
+
+  <Step title="Review discovered cameras">
+    After a successful save you are taken directly to the **Cameras** page, which lists every camera found in your Rhombus organization. From here you can enable RTSP streams for individual cameras.
+
+    See [Camera discovery](/usage/camera-discovery) for details on what is discovered and how to refresh the list.
+  </Step>
+</Steps>
+
+## How first-run detection works
+
+The frontend calls the auth status endpoint each time the page loads:
+
+```bash
+GET /api/auth/status
+```
+
+Possible responses:
+
+| `setup_state` | Meaning |
+|---|---|
+| `needs_api_key` | No API key is stored — setup form is shown |
+| `ready` | API key is configured — main UI is shown |
+
+This endpoint does **not** validate the stored key on every request; it only checks whether the key field is non-empty in the config file.

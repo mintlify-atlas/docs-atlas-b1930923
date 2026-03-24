@@ -1,0 +1,210 @@
+---
+title: "Architecture"
+description: "How EdgeCaster is structured internally"
+---
+
+EdgeCaster is a lightweight edge gateway. It pulls H.264 video from Rhombus cameras over HTTPS (Secure Raw Streams), re-publishes it to a local MediaMTX RTSP server via FFmpeg, and exposes a web UI for managing which cameras are active.
+
+## System diagram
+
+```
+Rhombus Camera
+     │
+     │ Secure Raw Stream (HTTPS H264)
+     ▼
+EdgeCaster (FFmpeg pull)
+     │
+     ▼
+MediaMTX (RTSP server)
+     │
+     ▼
+External Systems (VMS / NVR / AI)
+```
+
+The EdgeCaster backend acts as the control plane: it calls the Rhombus API to obtain time-limited stream URLs, spawns FFmpeg subprocesses to pull and re-publish each stream, and tracks state on disk so streams are restored automatically after a reboot.
+
+## Backend components
+
+### FastAPI application — `backend/app/main.py`
+
+The entry point. Creates the `FastAPI` instance with a `lifespan` context manager that handles startup and shutdown. In development, CORS is enabled for `http://localhost:5173` and `http://127.0.0.1:5173`. In production, FastAPI serves the compiled frontend from `frontend/dist/` via `StaticFiles`.
+
+Routers registered: `auth`, `cameras`, `streams`, `settings`, `system`.
+
+### Config loader — `backend/app/config.py`
+
+Loads `config.yaml` and returns an `EdgeCasterConfig` Pydantic model. Path resolution is automatic:
+
+- **Dev** (`EDGECASTER_ENV != "production"`): reads/writes `backend/data/config.yaml`
+- **Production**: reads/writes `/etc/edgecaster/config.yaml`
+
+Key config fields:
+
+```python
+class EdgeCasterConfig(BaseModel):
+    api_key: str = ""
+    max_streams: int = 10
+    mediamtx_rtsp_port: int = 8554
+    mediamtx_host: str = "127.0.0.1"
+    ffmpeg_loglevel: str = "warning"
+    auto_update_enabled: bool = True
+    update_hour_start: int = 2
+    update_hour_end: int = 5
+```
+
+### Dependency injection — `backend/app/dependencies.py`
+
+All service singletons are stored as module-level globals and exposed via `get_*()` functions used as FastAPI `Depends()` arguments:
+
+```python
+def get_config() -> EdgeCasterConfig: ...
+def get_state_store() -> StateStore: ...
+def get_stream_manager() -> StreamManager: ...
+def get_discovery() -> DiscoveryService: ...
+def get_rhombus_client() -> RhombusClient | None: ...
+```
+
+`init_services()` is called once during the `lifespan` startup phase to populate these globals. `set_rhombus_client()` is also called by the settings router when a new API key is saved at runtime.
+
+### StreamManager — `backend/app/services/stream_manager.py`
+
+The core orchestrator. Maintains an in-memory dict of `ManagedStream` objects keyed by camera UUID. Each `ManagedStream` holds:
+
+- The FFmpeg `asyncio.subprocess.Process`
+- Current `StreamState`
+- Retry counter and error message
+- A per-stream `monitor_task` that watches for process exit and handles restarts
+
+**Stream state machine:**
+
+```
+starting
+   │
+   ▼
+running ──────────────────► stopped
+   │                           ▲
+   │ (process exits with       │ (stop_stream called)
+   │  non-zero code)           │
+   ▼                           │
+restarting ──────────────────► failed
+                               (after 10 retries → 5-minute backoff → retry cycle)
+```
+
+Retry behaviour:
+- 5-second delay between attempts
+- Up to 10 attempts per cycle
+- After 10 failures: 5-minute backoff (`RECOVERY_BACKOFF_SECONDS = 300`), then the counter resets and the cycle repeats indefinitely
+- A background `health_check_loop` runs every 60 seconds to catch processes that died without triggering the monitor task
+
+**FFmpeg command structure:**
+
+```bash
+ffmpeg \
+  -hide_banner \
+  -loglevel warning \
+  -reconnect 1 \
+  -reconnect_streamed 1 \
+  -reconnect_delay_max 5 \
+  -i <lanVideoUrl> \
+  -c copy \
+  -f rtsp \
+  -rtsp_transport tcp \
+  rtsp://127.0.0.1:8554/<slug>
+```
+
+Key flags:
+- `-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5` — FFmpeg-level reconnect for transient HTTP drops on the Rhombus side
+- `-c copy` — stream copy only, no transcoding (preserves CPU on the Pi)
+- `-f rtsp -rtsp_transport tcp` — publish to MediaMTX over TCP RTSP
+
+### RhombusClient — `backend/app/services/rhombus_api.py`
+
+Async HTTP client wrapping the Rhombus REST API. Uses `httpx.AsyncClient` with auth headers set at construction time:
+
+```python
+headers={
+    "x-auth-scheme": "api-token",
+    "x-auth-apikey": api_key,
+    "Content-Type": "application/json",
+}
+```
+
+Base URL: `https://api2.rhombussystems.com`. All calls are `POST` to `/api/<endpoint>`.
+
+Key methods:
+
+| Method | Rhombus endpoint | Purpose |
+|--------|-----------------|---------|
+| `get_cameras()` | `POST /api/camera/getMinimalCameraStateList` | Discover all org cameras |
+| `create_raw_stream()` | `POST /api/camera/createRawHttpStream` | Obtain a time-limited LAN video URL |
+| `delete_raw_stream()` | `POST /api/camera/deleteRawHttpStream` | Clean up on stream stop |
+| `get_raw_streams()` | `POST /api/camera/getRawHttpStreams` | List existing streams |
+
+<Note>
+  Raw stream calls append a `.v0` facet to the camera UUID: `device_uuid = f"{camera_uuid}.v0"`. This is a Rhombus API requirement for raw HTTP stream operations.
+</Note>
+
+### StateStore — `backend/app/services/state_store.py`
+
+Thread-safe JSON persistence backed by a single `state.json` file. Writes are synchronous and happen on every mutation. Provides two higher-level accessors:
+
+```python
+# Which cameras should be streaming (survives reboots)
+get_enabled_cameras() -> set[str]
+set_enabled_cameras(camera_uuids: set[str]) -> None
+
+# Stable camera UUID → RTSP path slug mapping
+get_slug_map() -> dict[str, str]
+set_slug_map(slug_map: dict[str, str]) -> None
+```
+
+File location: `backend/data/state.json` in dev, `/var/lib/edgecaster/state.json` in production.
+
+### DiscoveryService — `backend/app/services/discovery.py`
+
+Simple in-memory cache of the camera list fetched from the Rhombus API. `refresh(client)` re-fetches and replaces the list. Provides `get_camera(uuid)` for single-camera lookups.
+
+The discovery result is used at startup to build a `camera_map` (uuid → name) passed to `StreamManager.restore_streams()`.
+
+## Startup lifecycle
+
+The full startup sequence is implemented in the `lifespan` context manager in `main.py`:
+
+<Steps>
+  <Step title="Load config and set up logging">
+    `load_config()` reads the YAML file (or starts with defaults if none exists) and resolves dev/prod paths. `setup_logging()` configures handlers writing to `log_dir`.
+  </Step>
+
+  <Step title="Initialize services">
+    `StateStore`, `DiscoveryService`, and `StreamManager` are constructed unconditionally. `RhombusClient` is only constructed if `config.api_key` is non-empty.
+  </Step>
+
+  <Step title="Discover cameras and restore streams">
+    If an API key is present, `discovery.refresh(rhombus_client)` fetches the camera list. Then `stream_manager.restore_streams(camera_map)` reads the enabled set from `StateStore` and restarts FFmpeg for each previously-enabled camera.
+  </Step>
+
+  <Step title="Register dependency injection singletons">
+    `init_services(...)` populates the module-level globals in `dependencies.py` so all FastAPI route handlers can resolve them via `Depends()`.
+  </Step>
+
+  <Step title="Start background tasks">
+    Two asyncio tasks are launched: `watchdog_loop()` (pings the systemd watchdog) and `stream_manager.health_check_loop()` (detects dead FFmpeg processes every 60 seconds).
+  </Step>
+
+  <Step title="Signal ready">
+    `notify_ready()` sends `READY=1` to systemd via the `NOTIFY_SOCKET` protocol, unblocking any dependent services.
+  </Step>
+</Steps>
+
+On shutdown (`yield` returns), the watchdog and health tasks are cancelled, all FFmpeg processes are terminated gracefully, and the `httpx` client is closed.
+
+## Frontend
+
+The frontend is a standard React 18 + TypeScript + Vite SPA located in `frontend/src/`. Key files:
+
+| File | Purpose |
+|------|---------|
+| `frontend/src/api.ts` | All `fetch()` calls to `/api/*` endpoints |
+| `frontend/src/types.ts` | TypeScript types mirroring backend Pydantic models |
+
+In development, Vite proxies `/api` to `http://localhost:8000` (configured in `vite.config.ts`). In production, Nginx serves the built static files and reverse-proxies `/api` to the FastAPI process on port 8000.

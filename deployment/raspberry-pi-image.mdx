@@ -1,0 +1,109 @@
+---
+title: "Raspberry Pi SD card image"
+description: "Build a ready-to-flash SD card image for Raspberry Pi 5"
+---
+
+Instead of installing EdgeCaster manually, you can build a ready-to-flash `.img.xz` file. Flash it to an SD card and EdgeCaster will configure itself on first boot — no keyboard, monitor, or manual SSH required.
+
+## Image modes
+
+<CardGroup cols={2}>
+  <Card title="Cloud-init" icon="cloud">
+    Smaller image. Downloads and installs all packages on first boot. Requires internet access during the first power-on.
+  </Card>
+  <Card title="Pre-baked" icon="hard-drive">
+    Larger image. All packages are installed inside the image before flashing. Works offline immediately after flashing.
+  </Card>
+</CardGroup>
+
+## Prerequisites
+
+The build script runs on a Linux host (x86-64). It requires:
+
+- `wget`, `xz`, `losetup`, `kpartx`, `mount` (standard on most Linux systems)
+- For pre-baked mode only: `qemu-user-static` for ARM64 chroot emulation
+
+Install the pre-baked mode dependency on Ubuntu/Debian:
+
+```bash
+sudo apt-get install qemu-user-static
+```
+
+## Build the image
+
+Run the build script from the repository root. Both commands must be run as root:
+
+```bash
+# Cloud-init mode (smaller image, needs internet on first boot)
+sudo bash image/build-image.sh
+
+# Pre-baked mode (larger image, no internet needed on first boot)
+sudo bash image/build-image.sh --prebaked
+```
+
+The script downloads the **Ubuntu Server 24.04.2 LTS arm64** base image, injects the EdgeCaster configuration, and compresses the result. Output is written to the repository root:
+
+```
+edgecaster-<version>.img.xz
+```
+
+<Info>
+  The base Ubuntu image download is cached at `/tmp/` so subsequent builds are faster.
+</Info>
+
+## Flash the image
+
+### Using Raspberry Pi Imager (recommended)
+
+1. Download and open [Raspberry Pi Imager](https://www.raspberrypi.com/software/).
+2. Click **Choose OS** → **Use custom** and select the `.img.xz` file.
+3. Select your SD card and click **Write**.
+
+### Using `dd`
+
+Decompress and write directly to the SD card (replace `/dev/sdX` with your SD card device):
+
+```bash
+xz -d edgecaster-<version>.img.xz
+sudo dd if=edgecaster-<version>.img of=/dev/sdX bs=4M status=progress
+```
+
+<Warning>
+  Double-check the target device with `lsblk` before running `dd`. Writing to the wrong device will overwrite data irreversibly.
+</Warning>
+
+## First boot
+
+Insert the SD card into the Raspberry Pi 5 and power it on. The first boot process:
+
+1. **Expands the root filesystem** to fill the SD card.
+2. **Regenerates SSH host keys** (unique per device).
+3. **Sets the hostname** to `edgecaster`.
+4. **Starts all EdgeCaster services** (`mediamtx`, `edgecaster`, `edgecaster-update.timer`).
+
+In cloud-init mode, package installation also runs on first boot, which may take a few minutes.
+
+Once complete, the device is accessible at:
+
+```
+http://edgecaster.local
+http://<device-ip>
+```
+
+### Default credentials
+
+| | Value |
+|---|---|
+| Username | `edgecaster` |
+| Password | `edgecaster` |
+| SSH | Enabled by default |
+
+<Warning>
+  Change the default password immediately after first login:
+
+  ```bash
+  passwd
+  ```
+
+  The default password is publicly known and must not remain set on any network-connected device.
+</Warning>

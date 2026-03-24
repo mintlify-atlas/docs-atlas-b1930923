@@ -1,0 +1,63 @@
+---
+title: "API overview"
+description: "EdgeCaster REST API reference — JSON over HTTP, served on port 80."
+---
+
+The EdgeCaster REST API lets you inspect and control every aspect of the device programmatically: check setup state, manage camera streams, read system metrics, and configure settings.
+
+<Note>
+  The API is implemented with **FastAPI** (Uvicorn on port 8000) and proxied through **Nginx on port 80**. All requests you make go to port 80; you never need to target port 8000 directly.
+</Note>
+
+## Base URL
+
+```
+http://<device-ip>/api
+```
+
+Replace `<device-ip>` with the IP address or hostname of your EdgeCaster device (e.g. `edgecaster.local`).
+
+## Authentication
+
+There is **no HTTP-level authentication** on any endpoint. Security relies on network isolation — deploy EdgeCaster only on a trusted LAN. The only credential involved is your Rhombus Org API Key, which is stored on-device and never returned in API responses.
+
+## All endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/auth/status` | Check setup state |
+| `GET` | `/api/settings` | Get application settings |
+| `POST` | `/api/settings/api-key` | Set Rhombus API key |
+| `PUT` | `/api/settings/update-schedule` | Configure auto-update window |
+| `POST` | `/api/settings/discovery/refresh` | Manually refresh camera list |
+| `GET` | `/api/cameras` | List discovered cameras with stream state |
+| `GET` | `/api/streams` | List all managed streams |
+| `POST` | `/api/streams/{uuid}/enable` | Start RTSP stream for a camera |
+| `POST` | `/api/streams/{uuid}/disable` | Stop RTSP stream for a camera |
+| `GET` | `/api/system/status` | System health metrics |
+
+## Example request
+
+```bash
+curl http://edgecaster.local/api/system/status
+```
+
+## Explore by topic
+
+<CardGroup cols={2}>
+  <Card title="Auth" href="/api/auth">
+    Check device setup state
+  </Card>
+  <Card title="Cameras" href="/api/cameras">
+    List Rhombus cameras discovered on your org
+  </Card>
+  <Card title="Streams" href="/api/streams">
+    Enable, disable, and inspect RTSP streams
+  </Card>
+  <Card title="Settings" href="/api/settings">
+    API key, update schedule, discovery refresh
+  </Card>
+  <Card title="System" href="/api/system">
+    CPU, memory, uptime, and stream counts
+  </Card>
+</CardGroup>

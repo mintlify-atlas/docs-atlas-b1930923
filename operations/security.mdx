@@ -1,0 +1,132 @@
+---
+title: "Security"
+description: "Security architecture and hardening for EdgeCaster"
+---
+
+EdgeCaster is designed for deployment on a trusted internal network. This page describes the security properties of the system and recommendations for hardening your installation.
+
+## Credential Storage
+
+The Rhombus Org API Key is the only secret EdgeCaster manages. It is stored in:
+
+```
+/etc/edgecaster/config.yaml
+```
+
+This file is:
+- Owned by the `edgecaster` system user
+- **Not world-readable** — only the `edgecaster` user and root can read it
+- Never logged anywhere in the application
+- Never returned in any API response (the `/api/settings` endpoint only exposes `api_key_configured: true/false`, not the key value itself)
+
+To inspect the file permissions:
+
+```bash
+ls -la /etc/edgecaster/config.yaml
+# Expected: -rw------- 1 edgecaster edgecaster ...
+```
+
+## Web UI Authentication
+
+<Warning>
+EdgeCaster has **no built-in authentication** on its web UI or API endpoints. Anyone who can reach port 80 on the device can view cameras and modify settings, including replacing the API key.
+
+Deploy EdgeCaster only on **trusted, isolated networks**. Do not expose port 80 to the internet or to untrusted VLANs.
+</Warning>
+
+Security relies entirely on network isolation. The intended deployment model is:
+
+- EdgeCaster is on a dedicated IoT or security camera VLAN
+- Only NVR/VMS hosts and authorized workstations have routed access to the device
+- The broader office or user network cannot reach the device directly
+
+## Systemd Service Hardening
+
+Both `edgecaster.service` and `mediamtx.service` run with systemd security directives that limit what the processes can do, even if compromised:
+
+| Directive | Effect |
+|-----------|--------|
+| `NoNewPrivileges=true` | Prevents the process from gaining additional privileges via setuid/setgid binaries |
+| `ProtectSystem=strict` | Mounts the entire filesystem read-only except for explicitly listed paths |
+| `ProtectHome=true` | Makes home directories inaccessible to the service |
+| `PrivateTmp=true` | Gives the service its own isolated `/tmp` namespace |
+| `ReadWritePaths=...` | Only `/etc/edgecaster`, `/var/lib/edgecaster`, and `/var/log/edgecaster` are writable |
+
+Both services run as the unprivileged `edgecaster` user (not root).
+
+## RTSP Stream Security
+
+<Warning>
+RTSP streams on port 8554 are **unauthenticated** in EdgeCaster v1. Any host that can reach the device on port 8554 can access any RTSP stream without credentials.
+</Warning>
+
+Restrict access to port 8554 using network controls:
+
+- **Firewall**: Allow port 8554 only from NVR/VMS host IP addresses
+- **VLAN**: Place EdgeCaster and NVR/VMS on the same isolated VLAN; block port 8554 from all other network segments
+
+```bash
+# Example: allow only the NVR host to reach RTSP
+sudo ufw allow from 192.168.10.50 to any port 8554
+sudo ufw deny 8554
+```
+
+### Adding RTSP Authentication (Advanced)
+
+MediaMTX supports per-path authentication via `publishUser`/`publishPass` and `readUser`/`readPass`. To enable read authentication on all RTSP paths, edit `/etc/edgecaster/mediamtx.yml`:
+
+```yaml
+pathDefaults:
+  source: publisher
+  record: no
+  readUser: your_username
+  readPass: your_password
+```
+
+Then restart MediaMTX:
+
+```bash
+sudo systemctl restart mediamtx
+```
+
+Clients (VMS/NVR) will need to include credentials in the RTSP URL:
+
+```
+rtsp://your_username:your_password@<device-ip>:8554/<slug>
+```
+
+<Note>
+Note that FFmpeg publishes to MediaMTX from localhost. If you add `publishUser`/`publishPass`, you must also update the publish URL used by EdgeCaster, which requires code changes in `backend/app/services/mediamtx.py`.
+</Note>
+
+## Raspberry Pi Image Default Password
+
+<Warning>
+The Raspberry Pi SD card image creates an `edgecaster` OS user with the default password **`edgecaster`**. **Change this password immediately** after first boot.
+</Warning>
+
+```bash
+passwd edgecaster
+```
+
+Also consider:
+- Disabling password-based SSH authentication and using SSH keys instead
+- Changing the hostname if you have multiple devices on the same network
+
+## Network Recommendations
+
+| Recommendation | Rationale |
+|----------------|-----------|
+| Place on an isolated VLAN | Limits blast radius if the device is compromised; prevents cameras from being accessed by general users |
+| Firewall port 8554 to NVR/VMS only | RTSP is unauthenticated; network controls are the only access restriction in v1 |
+| Do not expose port 80 externally | The web UI has no authentication; anyone with access can read camera feeds and reconfigure the device |
+| Use SSH keys, disable password SSH | Reduces risk of brute-force attacks on the management interface |
+| Keep EdgeCaster updated | The nightly auto-update pulls security fixes from the upstream repository |
+
+## Port Reference
+
+| Port | Protocol | Purpose | Recommended access |
+|------|----------|---------|--------------------|
+| 80 | TCP | Web UI (Nginx reverse proxy) | Trusted management hosts only |
+| 8000 | TCP | Backend API (internal) | Localhost only — blocked by Nginx config |
+| 8554 | TCP/UDP | RTSP streams (MediaMTX) | NVR/VMS hosts only |

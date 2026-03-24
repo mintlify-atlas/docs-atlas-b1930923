@@ -1,0 +1,85 @@
+---
+title: "Network ports"
+description: "Ports used by EdgeCaster services, firewall recommendations, and outbound network requirements"
+---
+
+EdgeCaster exposes two inbound ports to the local network and keeps one port strictly on localhost. The table below lists all ports and their purposes.
+
+## Inbound ports
+
+| Port | Protocol | Service | Accessible from |
+|------|----------|---------|----------------|
+| 80 | TCP | Web UI (Nginx reverse proxy → backend on 8000) | LAN |
+| 8000 | TCP | Backend API (FastAPI / Uvicorn) | localhost only |
+| 8554 | TCP + UDP | RTSP streams (MediaMTX) | LAN |
+
+### Port 80 — Web UI
+
+Nginx listens on port 80 and serves two things from the same origin:
+
+- **Static files** — the compiled React frontend (`frontend/dist/`)
+- **API proxy** — requests to `/api/*` are forwarded to `127.0.0.1:8000`
+
+This means the web UI and the API share a single port from the perspective of any client on the network.
+
+### Port 8000 — Backend API
+
+Uvicorn binds to `127.0.0.1:8000` (loopback only). It is not directly reachable from outside the device — all external API traffic flows through Nginx on port 80. Do not open port 8000 in your firewall.
+
+### Port 8554 — RTSP streams
+
+MediaMTX listens on port 8554 for RTSP connections over both TCP and UDP. VMS, NVR, and other video consumers connect directly to this port using URLs of the form:
+
+```
+rtsp://<device-ip>:8554/<camera-slug>
+```
+
+For example:
+
+```
+rtsp://192.168.1.50:8554/front_door
+rtsp://192.168.1.50:8554/warehouse_north
+```
+
+<Warning>
+RTSP streams on port 8554 are **unauthenticated** in v1. Any device on the network that can reach port 8554 can view the streams. Restrict access using VLAN segmentation, firewall rules, or switch ACLs rather than relying on application-level controls. Authentication can be added in a future release via MediaMTX `publishUser`/`readUser` settings — see [MediaMTX configuration](/configuration/mediamtx).
+</Warning>
+
+---
+
+## Outbound network requirements
+
+The backend makes outbound HTTPS calls to two destinations:
+
+| Destination | Port | Purpose |
+|-------------|------|---------|
+| `api2.rhombussystems.com` | 443 (HTTPS) | Rhombus API — camera discovery, raw stream token creation and deletion |
+| _(update server)_ | 443 (HTTPS) | Git pull for automatic updates (requires internet access) |
+
+If the device is behind a restrictive firewall, ensure outbound TCP 443 is permitted to `api2.rhombussystems.com`. Without this, camera discovery will fail and no streams can be created.
+
+Auto-updates additionally require the device to be able to reach the GitHub repository over HTTPS. If auto-updates are not needed they can be disabled via `auto_update_enabled: false` in `/etc/edgecaster/config.yaml`.
+
+---
+
+## Firewall recommendations
+
+EdgeCaster is designed for deployment on a trusted local network. The recommended firewall posture is:
+
+| Rule | Action | Reason |
+|------|--------|--------|
+| Inbound TCP 80 from trusted LAN | Allow | Web UI access |
+| Inbound TCP+UDP 8554 from trusted LAN | Allow | RTSP stream consumers |
+| Inbound TCP 8000 from any external source | Block | Internal API only; Nginx is the intended entry point |
+| Outbound TCP 443 to `api2.rhombussystems.com` | Allow | Rhombus API required for operation |
+| All other inbound | Block | Minimal attack surface |
+
+<Info>
+If your VMS or NVR is on a separate VLAN from the EdgeCaster device, ensure the inter-VLAN routing policy allows TCP+UDP port 8554 from the VMS VLAN to the EdgeCaster IP.
+</Info>
+
+---
+
+## No authentication on the web UI
+
+The web UI on port 80 has no built-in login. Anyone who can reach port 80 on the device can view cameras and change settings, including the Rhombus API key. Deploy EdgeCaster on a network segment that is not accessible from untrusted hosts, and consider using a firewall rule to restrict port 80 to specific management workstations if needed.

@@ -1,0 +1,97 @@
+---
+title: "Managing RTSP streams"
+description: "Enable, disable, and monitor RTSP streams for your Rhombus cameras."
+---
+
+EdgeCaster converts Rhombus Secure Raw Streams (HTTPS H.264) into RTSP streams using FFmpeg and publishes them via MediaMTX on port `8554`. Each enabled camera gets a dedicated FFmpeg subprocess and a deterministic RTSP URL.
+
+## RTSP URL format
+
+Enabled streams are available at:
+
+```
+rtsp://<device-ip>:8554/<camera-slug>
+```
+
+The `<camera-slug>` is derived from the camera's name at the time streaming is first enabled. The name is normalized to lowercase with spaces replaced by underscores and non-alphanumeric characters removed. For example:
+
+| Camera name | RTSP slug |
+|---|---|
+| `Front Door` | `front_door` |
+| `Parking Lot #2` | `parking_lot_2` |
+| `Office - East Wing` | `office_east_wing` |
+
+Once a slug is assigned to a camera UUID it is persisted to disk (`slug_map` in the state file) and does not change if the camera is renamed in Rhombus Console. This keeps downstream NVR and VMS configurations stable.
+
+If two cameras produce the same slug (e.g., two cameras both named `Front Door`), a numeric suffix is appended to the second one (`front_door_1`, `front_door_2`, etc.).
+
+## Stream enable flow
+
+Toggling a camera on in the UI sends a `POST /api/streams/{camera_uuid}/enable` request. The backend then:
+
+1. Checks the 10-stream limit (see below).
+2. Looks up or generates the camera's RTSP slug.
+3. Calls `POST /api/camera/createRawHttpStream` on the Rhombus API to obtain a signed HTTPS video URL.
+4. Spawns an FFmpeg subprocess that reads from that HTTPS URL and publishes to MediaMTX using RTSP over TCP (stream copy — no transcoding).
+5. Returns a `StreamInfo` object with the state set to `running`.
+
+## Stream states
+
+| State | Meaning |
+|---|---|
+| `starting` | Stream has been requested; Rhombus API call and FFmpeg launch are in progress |
+| `running` | FFmpeg process is alive and publishing to MediaMTX |
+| `restarting` | FFmpeg exited unexpectedly; a retry is in progress |
+| `failed` | All retry attempts exhausted; 5-minute backoff is active before the next recovery cycle |
+| `stopped` | Stream was manually disabled |
+
+## Stream recovery and retries
+
+If an FFmpeg process exits with a non-zero code, EdgeCaster automatically retries:
+
+- **Retry delay:** 5 seconds between attempts.
+- **Max attempts:** 10 per cycle.
+- **After 10 failures:** The stream enters `failed` state and EdgeCaster backs off for **5 minutes**, then resets the counter and tries again indefinitely. EdgeCaster never permanently gives up on an enabled stream.
+- **Each retry** requests a fresh Secure Raw Stream URL from Rhombus (the previous URL may have expired).
+- **Health check loop:** A background task runs every 60 seconds and detects any FFmpeg processes that have died silently (e.g., SIGKILL). Detected dead processes are restarted immediately.
+
+## Stream limit
+
+EdgeCaster supports a maximum of **10 concurrent streams** by default (configurable via `max_streams` in `config.yaml`). When the limit is reached:
+
+- The toggle for un-enabled cameras is disabled in the web UI.
+- An info banner appears: *"Maximum of 10 concurrent streams reached. Disable a stream to enable another."*
+- The API returns `HTTP 409 Conflict` for `POST /api/streams/{uuid}/enable` requests that exceed the limit.
+
+## Disabling a stream
+
+Toggling a camera off sends `POST /api/streams/{camera_uuid}/disable`. The backend:
+
+1. Removes the camera UUID from the persisted enabled set.
+2. Terminates the FFmpeg process (SIGTERM, then SIGKILL after 5 seconds if it does not exit).
+3. Cancels the monitor task for that stream.
+4. Calls `POST /api/camera/deleteRawHttpStream` on the Rhombus API to clean up the SRS session.
+
+The RTSP path in MediaMTX becomes inactive immediately after the FFmpeg process exits.
+
+## API reference
+
+| Endpoint | Description |
+|---|---|
+| `GET /api/streams` | List all managed streams and their current state |
+| `POST /api/streams/{camera_uuid}/enable` | Start streaming for a camera |
+| `POST /api/streams/{camera_uuid}/disable` | Stop streaming for a camera |
+
+### Example `StreamInfo` response
+
+```json
+{
+  "camera_uuid": "a1b2c3d4-...",
+  "camera_name": "Front Door",
+  "rtsp_path": "front_door",
+  "rtsp_url": "rtsp://192.168.1.100:8554/front_door",
+  "state": "running",
+  "error_message": "",
+  "lan_video_url": "https://..."
+}
+```

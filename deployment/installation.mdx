@@ -1,0 +1,117 @@
+---
+title: "Installation"
+description: "Install EdgeCaster on Raspberry Pi 5 with Ubuntu Server 24.04"
+---
+
+This guide walks through installing EdgeCaster directly on a Raspberry Pi 5 running Ubuntu Server 24.04. If you prefer a ready-to-flash SD card image, see the [Raspberry Pi SD card image](/deployment/raspberry-pi-image) guide instead.
+
+## Prerequisites
+
+| Requirement | Detail |
+|---|---|
+| Device | Raspberry Pi 5 |
+| RAM | 8 GB recommended |
+| Storage | 32 GB SD card minimum |
+| Network | Gigabit Ethernet |
+| OS | Ubuntu Server 24.04 LTS |
+
+You will also need a **Rhombus Org API Key** to connect EdgeCaster to your camera organization.
+
+## Install
+
+<Steps>
+  <Step title="Clone the repository">
+    SSH into your Raspberry Pi and clone the EdgeCaster repository:
+
+    ```bash
+    git clone https://github.com/RhombusSystems/edgecaster-stream-converter.git
+    cd edgecaster-stream-converter
+    ```
+  </Step>
+
+  <Step title="Run the installer">
+    The installer script is idempotent and safe to re-run. It must be executed with root privileges:
+
+    ```bash
+    sudo bash scripts/install.sh
+    ```
+
+    The installer performs the following steps automatically:
+
+    1. Installs system packages: FFmpeg, Python 3, Nginx, curl
+    2. Downloads and installs **MediaMTX v1.9.3** to `/usr/local/bin/mediamtx`
+    3. Installs **Node.js 20.x** (via NodeSource) if not already present
+    4. Creates the `edgecaster` system user (no login shell)
+    5. Creates the application directories: `/etc/edgecaster`, `/var/lib/edgecaster`, `/var/log/edgecaster`
+    6. Copies application code to `/opt/edgecaster`
+    7. Creates a Python virtual environment and installs Python dependencies
+    8. Builds the React frontend (`npm run build`)
+    9. Installs the default configuration to `/etc/edgecaster/config.yaml`
+    10. Configures Nginx as a reverse proxy on port 80
+    11. Installs and enables the systemd services
+    12. Starts `mediamtx.service`, `edgecaster.service`, and `edgecaster-update.timer`
+  </Step>
+
+  <Step title="Open the web UI">
+    Once the installer finishes, it prints the device address:
+
+    ```
+    Access the web UI at:
+      http://edgecaster.local
+      http://<device-ip>
+    ```
+
+    Open the address in a browser. You will be prompted to enter your Rhombus Org API Key.
+  </Step>
+
+  <Step title="Configure and connect cameras">
+    1. Enter your **Rhombus Org API Key** in the setup screen.
+    2. EdgeCaster discovers cameras automatically via the Rhombus API.
+    3. Toggle cameras to start their RTSP streams.
+
+    Streams are then available at:
+
+    ```
+    rtsp://<device-ip>:8554/<camera_name>
+    ```
+  </Step>
+</Steps>
+
+## Directory layout
+
+The installer creates the following paths:
+
+| Path | Purpose |
+|---|---|
+| `/opt/edgecaster` | Application code, virtual environment, built frontend |
+| `/etc/edgecaster/config.yaml` | Main configuration file |
+| `/etc/edgecaster/mediamtx.yml` | MediaMTX configuration |
+| `/var/lib/edgecaster/state.json` | Persistent stream state (survives reboots) |
+| `/var/log/edgecaster/` | Application and update logs |
+
+## Security note
+
+<Warning>
+  RTSP streams are unauthenticated in EdgeCaster v1. Anyone with network access to port 8554 can pull the streams. Restrict access using firewall rules or VLAN segmentation. Authentication can be added manually via the MediaMTX configuration (`/etc/edgecaster/mediamtx.yml`).
+</Warning>
+
+## Uninstall
+
+To remove EdgeCaster, run the uninstall script:
+
+```bash
+sudo bash scripts/uninstall.sh
+```
+
+This stops and disables all systemd services, removes the Nginx configuration, and deletes the application from `/opt/edgecaster`. Configuration and data are intentionally **preserved**:
+
+- `/etc/edgecaster/` — configuration
+- `/var/lib/edgecaster/` — stream state
+- `/var/log/edgecaster/` — logs
+
+To also remove all data and the service user:
+
+```bash
+sudo rm -rf /etc/edgecaster /var/lib/edgecaster /var/log/edgecaster
+sudo userdel edgecaster
+```

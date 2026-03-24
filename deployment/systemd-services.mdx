@@ -1,0 +1,102 @@
+---
+title: "Systemd services"
+description: "Managing EdgeCaster systemd services"
+---
+
+EdgeCaster is deployed as a set of systemd units. All services run as the `edgecaster` system user with hardened security options.
+
+## Services overview
+
+| Unit | Purpose | Port |
+|---|---|---|
+| `mediamtx.service` | RTSP server (MediaMTX) | 8554 |
+| `edgecaster.service` | Backend API (Uvicorn/FastAPI) | 8000 (localhost only) |
+| `edgecaster-update.timer` | Hourly update check | — |
+| `edgecaster-update.service` | Update runner (triggered by timer) | — |
+| `edgecaster-firstboot.service` | One-time first-boot setup (image only) | — |
+
+## Checking status
+
+```bash
+# Check service status
+sudo systemctl status edgecaster
+sudo systemctl status mediamtx
+sudo systemctl status edgecaster-update.timer
+```
+
+## Viewing logs
+
+All services write to the systemd journal:
+
+```bash
+# Follow EdgeCaster backend logs
+journalctl -u edgecaster -f
+
+# Follow MediaMTX RTSP server logs
+journalctl -u mediamtx -f
+
+# View update logs (last 50 lines)
+journalctl -u edgecaster-update -n 50
+
+# Or read the update log file directly
+cat /var/log/edgecaster/update.log
+```
+
+## Restarting services
+
+```bash
+# Restart the EdgeCaster backend
+sudo systemctl restart edgecaster
+
+# Restart MediaMTX
+sudo systemctl restart mediamtx
+
+# Restart both
+sudo systemctl restart mediamtx edgecaster
+```
+
+<Note>
+  `edgecaster.service` declares `After=mediamtx.service`, so if you restart both, systemd will start MediaMTX first automatically.
+</Note>
+
+## Service details
+
+### edgecaster.service
+
+Runs the FastAPI backend with Uvicorn, bound to `127.0.0.1:8000`. Nginx proxies external traffic on port 80 to this socket.
+
+- **Type**: `notify` — signals readiness to systemd via `READY=1`
+- **Restart**: `on-failure` with a 5-second delay
+- **Watchdog**: 30-second heartbeat; systemd will restart the service if it stops sending pings
+- **Start limit**: maximum 5 restarts within 5 minutes before systemd gives up
+
+### mediamtx.service
+
+Runs the MediaMTX RTSP server using the configuration at `/etc/edgecaster/mediamtx.yml`.
+
+- **Type**: `simple`
+- **Restart**: `on-failure` with a 3-second delay
+- **Port**: 8554 (RTSP)
+
+### edgecaster-update.timer
+
+Fires the `edgecaster-update.service` on an hourly schedule with a randomized delay of up to 5 minutes to spread load across fleets.
+
+```bash
+# Check when the timer last ran and when it will next fire
+systemctl status edgecaster-update.timer
+```
+
+## Security hardening
+
+Both `edgecaster.service` and `mediamtx.service` are configured with the following systemd security options:
+
+| Option | Effect |
+|---|---|
+| `NoNewPrivileges=true` | Prevents the process from gaining additional privileges via setuid or capabilities |
+| `ProtectSystem=strict` | Mounts `/usr`, `/boot`, and `/etc` read-only for the service |
+| `ProtectHome=true` | Makes `/home`, `/root`, and `/run/user` inaccessible |
+| `PrivateTmp=true` | Gives the service a private `/tmp` namespace |
+| `ReadWritePaths=...` | Explicitly grants write access only to `/etc/edgecaster`, `/var/lib/edgecaster`, and `/var/log/edgecaster` |
+
+The `edgecaster-update.service` runs as `root` because it performs `git pull`, `pip install`, `npm run build`, and `systemctl restart` — operations that require elevated privileges.

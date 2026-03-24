@@ -1,0 +1,283 @@
+---
+title: "Troubleshooting"
+description: "Diagnose and fix common EdgeCaster issues"
+---
+
+Use the accordion sections below to diagnose common problems. Each section includes specific commands to run and what to look for in the output.
+
+<AccordionGroup>
+  <Accordion title="No cameras found">
+    The web UI shows an empty camera list after entering an API key.
+
+    **Likely causes:**
+    - The Rhombus Org API Key is invalid or belongs to the wrong organization
+    - The device cannot reach `api2.rhombussystems.com`
+    - The discovery request timed out
+
+    **Steps to diagnose:**
+
+    <Steps>
+      <Step title="Verify the API key">
+        In the web UI, go to **Settings** and confirm the API key shown as configured is the correct Org API Key (not a user key or camera key). Try removing and re-entering it.
+      </Step>
+      <Step title="Check network connectivity to the Rhombus API">
+        ```bash
+        curl -v https://api2.rhombussystems.com
+        ```
+        You should receive an HTTP response (even a 404 or 401 is fine — it proves connectivity). If the connection times out or is refused, check DNS and firewall rules for outbound HTTPS.
+      </Step>
+      <Step title="Check the Rhombus API log">
+        ```bash
+        journalctl -u edgecaster -n 50
+        # or
+        cat /var/log/edgecaster/rhombus_api.log
+        ```
+        Look for errors on the `edgecaster.rhombus_api` logger that describe the API response code or error message.
+      </Step>
+      <Step title="Trigger a manual refresh">
+        In the web UI, go to **Settings → Refresh Camera List** to force a new discovery call. Watch the log output while doing so.
+      </Step>
+    </Steps>
+  </Accordion>
+
+  <Accordion title="Stream not starting">
+    You toggled a camera on in the UI, but its state stays `starting` or immediately moves to `failed`.
+
+    **Likely causes:**
+    - FFmpeg is not installed
+    - MediaMTX is not running
+    - The Rhombus raw stream URL could not be created (API error)
+
+    **Steps to diagnose:**
+
+    <Steps>
+      <Step title="Verify FFmpeg is installed">
+        ```bash
+        ffmpeg -version
+        ```
+        If this returns `command not found`, FFmpeg is missing. Reinstall it:
+        ```bash
+        sudo apt-get install -y ffmpeg
+        ```
+      </Step>
+      <Step title="Check MediaMTX is running">
+        ```bash
+        sudo systemctl status mediamtx
+        ```
+        If it is not active, start it:
+        ```bash
+        sudo systemctl start mediamtx
+        ```
+      </Step>
+      <Step title="Check the stream manager log">
+        ```bash
+        journalctl -u edgecaster -f
+        # or
+        cat /var/log/edgecaster/stream_manager.log
+        ```
+        Look for lines from `edgecaster.stream_manager` describing why the FFmpeg launch failed. Common messages include `FFmpeg not found on system` or `Failed to create raw stream`.
+      </Step>
+      <Step title="Check the Rhombus API log for token errors">
+        ```bash
+        cat /var/log/edgecaster/rhombus_api.log
+        ```
+        A 401 or 403 from Rhombus at the `createRawHttpStream` call means the API key does not have permission to create raw streams for the target camera.
+      </Step>
+    </Steps>
+  </Accordion>
+
+  <Accordion title="RTSP URL not working">
+    The web UI shows the stream as `running`, but your VMS/NVR cannot connect, or VLC shows an error.
+
+    **Likely causes:**
+    - Port 8554 is blocked by a firewall
+    - The stream has transitioned to a failed state since you last checked
+    - You are using the wrong slug or IP address in the URL
+
+    **Steps to diagnose:**
+
+    <Steps>
+      <Step title="Confirm stream state in the UI">
+        Reload the EdgeCaster web UI and verify the camera badge shows `running`. If it shows `restarting` or `failed`, wait for the retry cycle or check the stream manager log.
+      </Step>
+      <Step title="Test with VLC">
+        ```bash
+        vlc rtsp://<device-ip>:8554/<slug>
+        ```
+        Replace `<slug>` with the exact path shown in the web UI (e.g. `front_door`, not `Front Door`). If VLC connects successfully but your NVR does not, the issue is with the NVR configuration.
+      </Step>
+      <Step title="Check port 8554 is not firewalled">
+        From another host on the same network:
+        ```bash
+        nc -zv <device-ip> 8554
+        ```
+        If the connection is refused or times out, port 8554 is being blocked. Check `ufw` rules on the device:
+        ```bash
+        sudo ufw status
+        ```
+      </Step>
+      <Step title="Verify MediaMTX is publishing the path">
+        ```bash
+        journalctl -u mediamtx -n 30
+        ```
+        MediaMTX logs each published and consumed path. Confirm the slug you are using appears as a published path.
+      </Step>
+    </Steps>
+  </Accordion>
+
+  <Accordion title="Auto-update not running">
+    You expected the system to have updated overnight, but it is still on the old version.
+
+    **Likely causes:**
+    - The update timer is not active
+    - The update ran but found no new commits (this is normal)
+    - The current hour fell outside the configured update window
+    - The installation directory does not contain a `.git` folder
+
+    **Steps to diagnose:**
+
+    <Steps>
+      <Step title="Check the timer status">
+        ```bash
+        systemctl status edgecaster-update.timer
+        ```
+        The output shows when the timer last fired and when it will fire next. If the timer is inactive or failed, enable it:
+        ```bash
+        sudo systemctl enable --now edgecaster-update.timer
+        ```
+      </Step>
+      <Step title="Check the update log">
+        ```bash
+        cat /var/log/edgecaster/update.log
+        ```
+        This file contains the output of every update attempt. Look for errors such as `fatal: not a git repository` or network failures.
+      </Step>
+      <Step title="Verify the .git folder exists">
+        ```bash
+        ls /opt/edgecaster/.git
+        ```
+        Auto-updates require a git-based installation. If there is no `.git` directory, updates cannot run. Re-install using the git clone method.
+      </Step>
+      <Step title="Check the configured update window">
+        ```bash
+        cat /etc/edgecaster/config.yaml
+        ```
+        Confirm `auto_update_enabled: true` and that `update_hour_start` and `update_hour_end` define a window that the device actually passes through. The default window is 2:00–5:00 AM local time.
+      </Step>
+    </Steps>
+  </Accordion>
+
+  <Accordion title="High CPU usage">
+    The device is running hot or the system status API shows `cpu_percent` consistently above 80%.
+
+    **Likely causes:**
+    - Too many concurrent streams active
+    - FFmpeg is transcoding instead of copying (should not happen with the default config)
+    - A runaway FFmpeg process
+
+    **Steps to diagnose:**
+
+    <Steps>
+      <Step title="Check active stream count">
+        ```bash
+        curl http://localhost/api/system/status
+        ```
+        Check `active_streams` vs `max_streams`. The Raspberry Pi 5 is rated for up to 10 concurrent stream-copy sessions. If you are at or near 10, consider reducing the number of enabled streams.
+      </Step>
+      <Step title="Verify FFmpeg is using stream copy (no transcoding)">
+        ```bash
+        ps aux | grep ffmpeg
+        ```
+        Each FFmpeg process should include `-c copy` in its argument list. If you see `-c:v libx264` or any encoder, transcoding is happening unexpectedly — this would consume significant CPU and is not the intended behavior.
+      </Step>
+      <Step title="Identify CPU-heavy processes">
+        ```bash
+        top -b -n 1 | head -20
+        ```
+        Check which PIDs are consuming the most CPU. Each running stream spawns one `ffmpeg` process. More than 10 FFmpeg processes indicates a leak or misconfiguration.
+      </Step>
+    </Steps>
+  </Accordion>
+
+  <Accordion title="Stream stuck in 'restarting'">
+    A stream repeatedly cycles through `restarting` and never settles into `running`.
+
+    **Likely causes:**
+    - The Secure Raw Stream (SRS) token from Rhombus keeps expiring before FFmpeg stabilizes
+    - The camera is offline or unreachable on the LAN
+    - The Rhombus API is returning errors for `createRawHttpStream`
+
+    **Steps to diagnose:**
+
+    <Steps>
+      <Step title="Check the stream manager log for the specific error">
+        ```bash
+        journalctl -u edgecaster -f
+        # or
+        cat /var/log/edgecaster/stream_manager.log
+        ```
+        Look for the FFmpeg exit code and the last lines of stderr captured before the restart. Exit code `1` with a connection error usually points to a network problem or expired token. Exit code `-9` indicates the process was killed externally.
+      </Step>
+      <Step title="Check the Rhombus API log for token creation errors">
+        ```bash
+        cat /var/log/edgecaster/rhombus_api.log
+        ```
+        Repeated `createRawHttpStream` failures indicate an API or permissions issue rather than a connectivity problem.
+      </Step>
+      <Step title="Verify the camera is online">
+        Confirm the camera appears online in the Rhombus Console. An offline or unreachable camera will cause FFmpeg to fail immediately on every attempt, regardless of token validity.
+      </Step>
+      <Step title="Try disabling and re-enabling the stream">
+        In the web UI, toggle the camera off and then back on. This resets the retry counter and forces a fresh token request. If the stream starts and stays `running` after re-enabling, the previous token had expired.
+      </Step>
+    </Steps>
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Diagnostic Checklist
+
+Run through this checklist when EdgeCaster is behaving unexpectedly:
+
+<Steps>
+  <Step title="Check service health">
+    ```bash
+    sudo systemctl status edgecaster
+    sudo systemctl status mediamtx
+    ```
+    Both services should show `active (running)`.
+  </Step>
+  <Step title="Check system resource usage">
+    ```bash
+    curl http://localhost/api/system/status
+    ```
+    Review `cpu_percent`, `memory_percent`, and `active_streams`. High CPU with many streams is expected; high CPU with zero streams indicates a problem.
+  </Step>
+  <Step title="Review recent log output">
+    ```bash
+    journalctl -u edgecaster -n 50
+    journalctl -u mediamtx -n 20
+    ```
+    Look for `ERROR` or `WARNING` lines and note the timestamps.
+  </Step>
+  <Step title="Verify FFmpeg and MediaMTX are available">
+    ```bash
+    ffmpeg -version
+    mediamtx --version
+    ```
+    Both commands should return version output without errors.
+  </Step>
+  <Step title="Check disk space">
+    ```bash
+    df -h /var/log/edgecaster
+    ```
+    A full disk will prevent log writes and may cause service instability.
+  </Step>
+  <Step title="Check network connectivity">
+    ```bash
+    curl -s -o /dev/null -w "%{http_code}" https://api2.rhombussystems.com
+    ```
+    Any HTTP response code (including 4xx) confirms the device can reach the Rhombus API. A timeout or connection error indicates a DNS or firewall issue.
+  </Step>
+</Steps>

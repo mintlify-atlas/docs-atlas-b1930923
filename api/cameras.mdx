@@ -1,0 +1,107 @@
+---
+title: "Cameras"
+description: "Camera discovery and listing endpoints — retrieve cameras found via the Rhombus API."
+---
+
+Cameras are discovered automatically from your Rhombus organisation when an API key is configured. Each camera object is augmented with its current RTSP stream state so you can check both the camera and its stream in one call.
+
+<Note>
+  Camera data comes from the Rhombus `getMinimalCameraStateList` endpoint. To force a fresh sync, call `POST /api/settings/discovery/refresh`.
+</Note>
+
+## GET /api/cameras
+
+Returns all cameras discovered from your Rhombus organisation, each annotated with its current RTSP streaming status.
+
+### Request
+
+No parameters or body required.
+
+```bash
+curl http://edgecaster.local/api/cameras
+```
+
+### Response fields
+
+The response is a JSON array. Each element has the following fields:
+
+<ResponseField name="uuid" type="string" required>
+  Unique identifier for the camera (assigned by Rhombus).
+</ResponseField>
+
+<ResponseField name="name" type="string" required>
+  Human-readable camera name as configured in Rhombus.
+</ResponseField>
+
+<ResponseField name="location_uuid" type="string">
+  UUID of the Rhombus location this camera belongs to. `null` if not assigned to a location.
+</ResponseField>
+
+<ResponseField name="location_name" type="string">
+  Display name of the camera's location. Empty string if not assigned.
+</ResponseField>
+
+<ResponseField name="status" type="string" required>
+  Connectivity status of the camera as reported by Rhombus. One of:
+  - `online` — Camera is reachable and streaming normally.
+  - `degraded` — Camera is reachable but experiencing issues.
+  - `offline` — Camera is not reachable.
+  - `unknown` — Status could not be determined.
+</ResponseField>
+
+<ResponseField name="lan_addresses" type="string[]">
+  List of LAN IP addresses for the camera. May be empty.
+</ResponseField>
+
+<ResponseField name="firmware_version" type="string">
+  Camera firmware version string. Empty string if not available.
+</ResponseField>
+
+<ResponseField name="serial_number" type="string">
+  Camera serial number. Empty string if not available.
+</ResponseField>
+
+<ResponseField name="rtsp_enabled" type="boolean" required>
+  Whether an RTSP stream is currently enabled for this camera on EdgeCaster.
+</ResponseField>
+
+<ResponseField name="rtsp_url" type="string">
+  Full RTSP URL for this camera's stream (e.g. `rtsp://192.168.1.50:8554/front_door`). Empty string if streaming is not enabled.
+</ResponseField>
+
+<ResponseField name="stream_state" type="string">
+  Current state of the RTSP stream. One of `starting`, `running`, `stopped`, `failed`, `restarting`. Empty string if streaming is not enabled.
+</ResponseField>
+
+### Example response
+
+```json
+[
+  {
+    "uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "name": "Front Door",
+    "location_uuid": "loc-uuid-1234",
+    "location_name": "HQ",
+    "status": "online",
+    "lan_addresses": ["192.168.1.101"],
+    "firmware_version": "11.4.1",
+    "serial_number": "R2A-00001",
+    "rtsp_enabled": true,
+    "rtsp_url": "rtsp://192.168.1.50:8554/front_door",
+    "stream_state": "running"
+  },
+  {
+    "uuid": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+    "name": "Warehouse North",
+    "location_uuid": "loc-uuid-1234",
+    "location_name": "HQ",
+    "status": "online",
+    "lan_addresses": ["192.168.1.102"],
+    "firmware_version": "11.4.1",
+    "serial_number": "R2A-00002",
+    "rtsp_enabled": false,
+    "rtsp_url": "",
+    "stream_state": ""
+  }
+]
+```

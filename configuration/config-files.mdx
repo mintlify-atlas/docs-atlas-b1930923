@@ -1,0 +1,171 @@
+---
+title: "Configuration files"
+description: "EdgeCaster configuration file reference — locations, fields, and formats for config.yaml, mediamtx.yml, and state.json"
+---
+
+EdgeCaster uses three files to persist its configuration and runtime state. In production these files live under standard system directories. In development mode they fall back to a local `data/` directory inside the project.
+
+## File locations
+
+| File | Production path | Dev path |
+|------|----------------|----------|
+| Main config | `/etc/edgecaster/config.yaml` | `backend/data/config.yaml` |
+| MediaMTX config | `/etc/edgecaster/mediamtx.yml` | _(not used in dev)_ |
+| Stream state | `/var/lib/edgecaster/state.json` | `backend/data/state.json` |
+| Log directory | `/var/log/edgecaster/` | `backend/data/logs/` |
+
+<Note>
+The active mode is controlled by the `EDGECASTER_ENV` environment variable. Any value other than `production` is treated as dev mode. The systemd service unit sets `EDGECASTER_ENV=production` automatically.
+</Note>
+
+---
+
+## config.yaml
+
+The main configuration file. Created by the installer from `packaging/edgecaster.default.yaml` and written back by the backend whenever settings change.
+
+<Tip>
+The easiest way to set the API key and update schedule is through the **Settings** page in the web UI — it writes directly to this file without requiring manual editing or a service restart.
+</Tip>
+
+### Fields
+
+<Accordion title="api_key">
+**Type:** `string` | **Default:** `""`
+
+Your Rhombus Organisation API Key. Required before EdgeCaster can discover cameras or create raw streams. Set this via the Settings page in the web UI; it is never logged or returned in API responses.
+
+The file is owned by the `edgecaster` system user and is not world-readable.
+</Accordion>
+
+<Accordion title="max_streams">
+**Type:** `integer` | **Default:** `10`
+
+Maximum number of concurrent RTSP streams. Attempting to enable more cameras than this limit will be rejected. The default of 10 reflects the practical CPU ceiling of a Raspberry Pi 5 running stream-copy FFmpeg processes.
+</Accordion>
+
+<Accordion title="mediamtx_rtsp_port">
+**Type:** `integer` | **Default:** `8554`
+
+The TCP/UDP port that MediaMTX listens on for RTSP connections. Must match the `rtspAddress` value in `/etc/edgecaster/mediamtx.yml`. Change both together if you need to use a non-standard port.
+</Accordion>
+
+<Accordion title="mediamtx_host">
+**Type:** `string` | **Default:** `"127.0.0.1"`
+
+Hostname or IP address that the backend uses when constructing the FFmpeg publish URL (`rtsp://<mediamtx_host>:<mediamtx_rtsp_port>/<slug>`). The default keeps FFmpeg publishing over loopback; there is normally no reason to change this.
+</Accordion>
+
+<Accordion title="ffmpeg_loglevel">
+**Type:** `string` | **Default:** `"warning"`
+
+Passed directly to FFmpeg via the `-loglevel` flag for every stream subprocess. Valid values (from least to most verbose): `quiet`, `panic`, `fatal`, `error`, `warning`, `info`, `verbose`, `debug`.
+
+Increase to `info` or `verbose` when diagnosing stream startup problems.
+</Accordion>
+
+<Accordion title="auto_update_enabled">
+**Type:** `boolean` | **Default:** `true`
+
+When `true`, the hourly `edgecaster-update.timer` systemd unit will apply git fast-forward updates during the configured window. Set to `false` to disable automatic updates entirely without stopping the timer.
+</Accordion>
+
+<Accordion title="update_hour_start">
+**Type:** `integer` (0–23) | **Default:** `2`
+
+Start of the nightly auto-update window, expressed as a 24-hour clock hour (local system time). Updates will not be applied before this hour.
+</Accordion>
+
+<Accordion title="update_hour_end">
+**Type:** `integer` (0–23) | **Default:** `5`
+
+End of the nightly auto-update window. Updates will not be applied at or after this hour. The default window of 2–5 AM gives a three-hour maintenance window with minimal disruption.
+</Accordion>
+
+<Accordion title="posthog_api_key">
+**Type:** `string` | **Default:** `""`
+
+Optional PostHog project API key for anonymous usage analytics. Leave empty to disable telemetry. When set, events are sent to `posthog_host`.
+</Accordion>
+
+<Accordion title="posthog_host">
+**Type:** `string` | **Default:** `"https://us.i.posthog.com"`
+
+PostHog ingestion endpoint. Only used when `posthog_api_key` is non-empty. Change this if you are self-hosting PostHog.
+</Accordion>
+
+### Complete example
+
+```yaml
+# /etc/edgecaster/config.yaml
+
+# Rhombus Org API Key (set via the web UI)
+api_key: "rapi_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+# Maximum concurrent RTSP streams (protects Pi CPU)
+max_streams: 10
+
+# MediaMTX RTSP settings
+mediamtx_rtsp_port: 8554
+mediamtx_host: "127.0.0.1"
+
+# FFmpeg log level: quiet, panic, fatal, error, warning, info, verbose, debug
+ffmpeg_loglevel: "warning"
+
+# Auto-update settings
+auto_update_enabled: true
+update_hour_start: 2   # 2:00 AM
+update_hour_end: 5     # 5:00 AM
+```
+
+---
+
+## state.json
+
+Stored at `/var/lib/edgecaster/state.json` in production. This file is written by the backend every time a stream is enabled or disabled and is read on startup to restore previously running streams. Do not edit it manually while the service is running.
+
+### Structure
+
+```json
+{
+  "enabled_cameras": [
+    "uuid-aaa-111",
+    "uuid-bbb-222"
+  ],
+  "slug_map": {
+    "uuid-aaa-111": "front_door",
+    "uuid-bbb-222": "warehouse_north"
+  }
+}
+```
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `enabled_cameras` | `string[]` | Sorted list of camera UUIDs that were enabled at last save. Restored on startup. |
+| `slug_map` | `{ [uuid: string]: string }` | Maps each camera UUID to its URL-safe RTSP path segment (slug). Slugs are derived from camera names and are stable across restarts. |
+
+<Note>
+Slugs are generated once from the camera display name and reused so that RTSP URLs remain stable even if the camera is toggled off and on. The slug generation logic lives in `backend/app/utils/slugify.py`.
+</Note>
+
+---
+
+## mediamtx.yml
+
+The MediaMTX configuration file at `/etc/edgecaster/mediamtx.yml` is passed directly to the `mediamtx` binary at startup. See the [MediaMTX configuration](/configuration/mediamtx) page for full details.
+
+---
+
+## Dev vs. production paths
+
+When `EDGECASTER_ENV` is not set to `production` (the default for local development), the backend resolves all paths relative to the repository root:
+
+```
+backend/data/config.yaml   ← main config
+backend/data/state.json    ← stream state
+backend/data/logs/         ← log output
+```
+
+These paths are created automatically if they do not exist. The `backend/data/` directory is excluded from version control via `.gitignore`.
+
+In production, the installer creates the system directories, copies `packaging/edgecaster.default.yaml` to `/etc/edgecaster/config.yaml`, and sets `EDGECASTER_ENV=production` in the systemd service environment.

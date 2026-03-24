@@ -1,0 +1,43 @@
+---
+title: "Auth"
+description: "Authentication status endpoints — check whether EdgeCaster is ready to use."
+---
+
+## GET /api/auth/status
+
+Returns the current setup state of the device. Use this endpoint to determine whether an initial Rhombus API key has been configured.
+
+### Request
+
+No parameters or body required.
+
+```bash
+curl http://edgecaster.local/api/auth/status
+```
+
+### Response fields
+
+<ResponseField name="setup_state" type="string" required>
+  Indicates how far through initial setup the device is. Possible values:
+
+  - `needs_api_key` — No Rhombus Org API Key has been saved yet. The device cannot discover cameras or serve streams until a key is configured via `POST /api/settings/api-key`.
+  - `ready` — A valid API key is configured and the device is fully operational.
+</ResponseField>
+
+### Example response
+
+**Before API key is set:**
+
+```json
+{
+  "setup_state": "needs_api_key"
+}
+```
+
+**After API key is configured:**
+
+```json
+{
+  "setup_state": "ready"
+}
+```

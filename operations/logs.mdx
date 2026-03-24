@@ -1,0 +1,142 @@
+---
+title: "Logs"
+description: "Accessing and understanding EdgeCaster log output"
+---
+
+EdgeCaster writes structured logs to `/var/log/edgecaster/` in production and to stdout in development mode. All log entries follow a consistent format and are organized by domain.
+
+## Log Directory
+
+In production, all application logs are written to:
+
+```
+/var/log/edgecaster/
+├── app.log               # General application events
+├── stream_manager.log    # FFmpeg process lifecycle and stream state changes
+└── rhombus_api.log       # Rhombus API calls and responses
+```
+
+Additionally, the auto-update script writes its own log:
+
+```bash
+cat /var/log/edgecaster/update.log
+```
+
+This log captures the output of each hourly update check, including git pull results and any errors encountered during the update process.
+
+## Journald (Live Logs)
+
+Because EdgeCaster runs as systemd services, logs are also captured by journald. Use these commands for live tailing:
+
+```bash
+# Follow EdgeCaster backend logs
+journalctl -u edgecaster -f
+
+# Follow MediaMTX RTSP server logs
+journalctl -u mediamtx -f
+
+# Show the last 100 lines from EdgeCaster
+journalctl -u edgecaster -n 100
+
+# Show logs since last boot
+journalctl -u edgecaster -b
+
+# Show logs between two timestamps
+journalctl -u edgecaster --since "2024-01-15 02:00:00" --until "2024-01-15 03:00:00"
+```
+
+<Tip>
+For quick diagnosis, `journalctl -u edgecaster -f` is the fastest way to watch what the backend is doing in real time.
+</Tip>
+
+## Logger Domains
+
+EdgeCaster uses three named Python loggers, each writing to its own file in production:
+
+| Logger name | Log file | What it covers |
+|-------------|----------|----------------|
+| `edgecaster` | `app.log` | Application startup, config loading, API key validation, general errors |
+| `edgecaster.stream_manager` | `stream_manager.log` | FFmpeg process start/stop, stream state transitions, retry events, health check results |
+| `edgecaster.rhombus_api` | `rhombus_api.log` | Outbound Rhombus API calls (`createRawHttpStream`, `deleteRawHttpStream`, camera discovery) |
+
+All loggers use the same format:
+
+```
+%(asctime)s [%(levelname)s] %(name)s: %(message)s
+```
+
+Example formatted line:
+
+```
+2024-01-15 02:31:04 [INFO] edgecaster.stream_manager: Starting FFmpeg for Front Door: https://... -> rtsp://127.0.0.1:8554/front_door
+```
+
+## Log Levels
+
+| Mode | Log level | Output destination |
+|------|-----------|--------------------|
+| Production (`EDGECASTER_ENV=production`) | `INFO` and above | Files in `/var/log/edgecaster/` |
+| Development (any other value) | `DEBUG` and above | stdout (console) |
+
+In development mode, all three loggers write to the console at `DEBUG` level, so you will see verbose output including Rhombus API response details. In production, `DEBUG` messages are suppressed.
+
+<Note>
+FFmpeg's own log verbosity is controlled separately by `ffmpeg_loglevel` in `/etc/edgecaster/config.yaml` (default: `warning`). FFmpeg output goes to journald via the service's stderr, not to the application log files.
+</Note>
+
+## Log Rotation
+
+Log rotation is configured via `/etc/logrotate.d/edgecaster` (installed from `packaging/edgecaster-logrotate.conf`). The configuration:
+
+```
+/var/log/edgecaster/*.log {
+    rotate 5
+    size 10M
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}
+```
+
+This means:
+- Each log file is rotated when it reaches **10 MB**
+- Up to **5 rotated copies** are kept per file
+- Rotated files are **gzip-compressed** (with a one-rotation delay so the current rotated file stays uncompressed briefly)
+- `copytruncate` is used so the running process does not need to be reloaded after rotation
+- Missing or empty log files are silently ignored
+
+The Python `RotatingFileHandler` in `logging_setup.py` also enforces a 10 MB size limit with 5 backup copies at the application level, providing a second layer of rotation independent of logrotate.
+
+## Example Log Output
+
+**Stream starting successfully:**
+
+```
+2024-01-15 08:00:03 [INFO] edgecaster.stream_manager: Restoring 3 streams
+2024-01-15 08:00:03 [INFO] edgecaster.rhombus_api: Creating raw stream for abc123 (edgecaster_front_door)
+2024-01-15 08:00:04 [INFO] edgecaster.stream_manager: Starting FFmpeg for Front Door: https://192.168.1.10/... -> rtsp://127.0.0.1:8554/front_door
+2024-01-15 08:00:04 [INFO] edgecaster.stream_manager: Restored stream for Front Door (abc123)
+```
+
+**Stream failure and retry:**
+
+```
+2024-01-15 09:14:22 [WARNING] edgecaster.stream_manager: FFmpeg exited with code 1 for Warehouse Cam (attempt 1/10): Connection refused
+2024-01-15 09:14:22 [INFO] edgecaster.stream_manager: Retrying stream for Warehouse Cam in 5s
+2024-01-15 09:14:27 [INFO] edgecaster.rhombus_api: Creating raw stream for def456 (edgecaster_warehouse_cam)
+2024-01-15 09:14:28 [INFO] edgecaster.stream_manager: Starting FFmpeg for Warehouse Cam: https://... -> rtsp://127.0.0.1:8554/warehouse_cam
+```
+
+**Retries exhausted, entering backoff:**
+
+```
+2024-01-15 10:03:11 [ERROR] edgecaster.stream_manager: Max retries for Parking Lot exhausted, backing off 300s before retry cycle
+```
+
+**Health check detecting a dead process:**
+
+```
+2024-01-15 11:00:05 [WARNING] edgecaster.stream_manager: Health check: stream for Side Entrance has dead process, forcing restart
+```

@@ -1,0 +1,150 @@
+---
+title: "Streams"
+description: "RTSP stream management endpoints — start, stop, and inspect camera streams."
+---
+
+EdgeCaster manages FFmpeg subprocesses that pull Rhombus Secure Raw Streams (HTTPS H264) and publish them to MediaMTX as RTSP. Each camera can have at most one stream, and the device supports up to 10 concurrent streams by default.
+
+Stream states follow this lifecycle:
+
+```
+starting → running
+         ↘
+           failed → restarting → running
+         ↘
+           stopped
+```
+
+---
+
+## GET /api/streams
+
+Returns all streams currently managed by EdgeCaster, regardless of state.
+
+### Request
+
+No parameters or body required.
+
+```bash
+curl http://edgecaster.local/api/streams
+```
+
+### Response fields
+
+The response is a JSON array of `StreamInfo` objects.
+
+<ResponseField name="camera_uuid" type="string" required>
+  UUID of the camera this stream belongs to.
+</ResponseField>
+
+<ResponseField name="camera_name" type="string" required>
+  Human-readable name of the camera.
+</ResponseField>
+
+<ResponseField name="rtsp_path" type="string" required>
+  URL-safe path segment used for the RTSP stream (e.g. `front_door`). Derived from the camera name.
+</ResponseField>
+
+<ResponseField name="rtsp_url" type="string" required>
+  Full RTSP URL consumers should use (e.g. `rtsp://192.168.1.50:8554/front_door`).
+</ResponseField>
+
+<ResponseField name="state" type="string" required>
+  Current stream state. One of `starting`, `running`, `stopped`, `failed`, `restarting`.
+</ResponseField>
+
+<ResponseField name="error_message" type="string">
+  Human-readable description of the last error. Empty string when the stream is healthy.
+</ResponseField>
+
+<ResponseField name="lan_video_url" type="string">
+  LAN-level video URL used internally by FFmpeg to pull the stream. Empty string if not yet assigned.
+</ResponseField>
+
+### Example response
+
+```json
+[
+  {
+    "camera_uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "camera_name": "Front Door",
+    "rtsp_path": "front_door",
+    "rtsp_url": "rtsp://192.168.1.50:8554/front_door",
+    "state": "running",
+    "error_message": "",
+    "lan_video_url": "https://192.168.1.101/media/video"
+  }
+]
+```
+
+---
+
+## POST /api/streams/{uuid}/enable
+
+Starts an RTSP stream for the specified camera. On success, EdgeCaster creates a Rhombus Secure Raw Stream token and launches an FFmpeg process to forward it to MediaMTX.
+
+### Path parameters
+
+<ParamField path="uuid" type="string" required>
+  UUID of the camera to start streaming. Must match a camera returned by `GET /api/cameras`.
+</ParamField>
+
+### Request
+
+No body required.
+
+```bash
+curl -X POST http://edgecaster.local/api/streams/a1b2c3d4-e5f6-7890-abcd-ef1234567890/enable
+```
+
+### Response
+
+Returns a `StreamInfo` object for the newly started stream (same fields as listed above).
+
+```json
+{
+  "camera_uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "camera_name": "Front Door",
+  "rtsp_path": "front_door",
+  "rtsp_url": "rtsp://192.168.1.50:8554/front_door",
+  "state": "starting",
+  "error_message": "",
+  "lan_video_url": ""
+}
+```
+
+### Error responses
+
+| Status | Condition |
+|--------|----------|
+| `404 Not Found` | Camera UUID not found in the discovered camera list. Try refreshing discovery first. |
+| `409 Conflict` | The maximum number of concurrent streams has been reached (default: 10). Disable another stream before enabling this one. |
+| `503 Service Unavailable` | Stream could not be started due to an internal error (e.g. MediaMTX unreachable). |
+
+---
+
+## POST /api/streams/{uuid}/disable
+
+Stops the RTSP stream for the specified camera and cleans up the Rhombus Secure Raw Stream token.
+
+### Path parameters
+
+<ParamField path="uuid" type="string" required>
+  UUID of the camera whose stream should be stopped.
+</ParamField>
+
+### Request
+
+No body required.
+
+```bash
+curl -X POST http://edgecaster.local/api/streams/a1b2c3d4-e5f6-7890-abcd-ef1234567890/disable
+```
+
+### Response
+
+```json
+{
+  "ok": true
+}
+```

@@ -1,0 +1,61 @@
+---
+title: "Hardware requirements"
+description: "What you need before installing EdgeCaster"
+---
+
+## Supported device
+
+EdgeCaster is designed and tested on the **Raspberry Pi 5**. Other ARM64 or x86_64 Linux devices may work with a manual install, but only the Pi 5 is officially supported.
+
+| Component | Requirement |
+|-----------|-------------|
+| Device    | Raspberry Pi 5 |
+| RAM       | 8 GB recommended |
+| Storage   | 32 GB SD card minimum |
+| Network   | Gigabit Ethernet |
+| OS        | Ubuntu Server 24.04 |
+
+<Note>
+  EdgeCaster supports up to **10 concurrent RTSP streams** by default. This limit exists because FFmpeg processes compete for Pi CPU time even with stream copy (no transcoding). The limit is configurable via `max_streams` in `/etc/edgecaster/config.yaml`, but exceeding 10 streams on a Pi 5 may cause stream instability.
+</Note>
+
+## Rhombus camera requirements
+
+EdgeCaster proxies Rhombus Secure Raw Streams, so your cameras must meet the following conditions:
+
+- **Online** — the camera must be connected to the Rhombus cloud and reporting as online in the Rhombus Console.
+- **On the local network** — EdgeCaster pulls the raw H.264 stream directly from the camera over the LAN. The Pi must be able to reach the camera's local IP address. Cameras on a different VLAN or subnet must have a routed path to the EdgeCaster device.
+- **Accessible via Rhombus API** — EdgeCaster uses your Org API Key to call `api2.rhombussystems.com` to discover cameras and create raw stream tokens. Each camera must be associated with your organization.
+
+## Network requirements
+
+The following ports must be open on the EdgeCaster device:
+
+| Port | Protocol | Direction | Purpose |
+|------|----------|-----------|---------|
+| 80   | TCP      | Inbound   | Web UI (Nginx) |
+| 8554 | TCP      | Inbound   | RTSP stream output (MediaMTX) |
+| 443  | TCP      | Outbound  | Rhombus API (`api2.rhombussystems.com`) |
+
+Port 8000 (the backend API) is bound to `localhost` only and is not exposed externally.
+
+<Warning>
+  **Auto-updates require a git-based installation.** If you install EdgeCaster from a standalone package or a pre-baked SD image without a `.git` directory, the `edgecaster-update.timer` will not be able to pull updates. Use the `git clone` install path if you want automatic nightly updates.
+</Warning>
+
+## What you do not need
+
+- A GPU or hardware video encoder — EdgeCaster uses stream copy, not transcoding.
+- A Rhombus NVR or local recorder — EdgeCaster connects directly to the Rhombus cloud API.
+- A static IP — mDNS (`edgecaster.local`) works on most networks. A static IP or DHCP reservation is recommended for production VMS integrations.
+
+---
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Install EdgeCaster and get your first RTSP stream running in under 10 minutes.
+  </Card>
+  <Card title="Full Installation Guide" icon="server" href="/deployment/installation">
+    SD card image builds, cloud-init configuration, and production deployment.
+  </Card>
+</CardGroup>
