@@ -89,14 +89,18 @@ systemctl status edgecaster-update.timer
 
 ## Security hardening
 
-Both `edgecaster.service` and `mediamtx.service` are configured with the following systemd security options:
+Both `edgecaster.service` and `mediamtx.service` run as the unprivileged `edgecaster` system user and include systemd security hardening:
 
-| Option | Effect |
-|---|---|
-| `NoNewPrivileges=true` | Prevents the process from gaining additional privileges via setuid or capabilities |
-| `ProtectSystem=strict` | Mounts `/usr`, `/boot`, and `/etc` read-only for the service |
-| `ProtectHome=true` | Makes `/home`, `/root`, and `/run/user` inaccessible |
-| `PrivateTmp=true` | Gives the service a private `/tmp` namespace |
-| `ReadWritePaths=...` | Explicitly grants write access only to `/etc/edgecaster`, `/var/lib/edgecaster`, and `/var/log/edgecaster` |
+| Option | `edgecaster.service` | `mediamtx.service` | Effect |
+|---|---|---|---|
+| `NoNewPrivileges=true` | ✓ | ✓ | Prevents privilege escalation via setuid or capabilities |
+| `ProtectSystem=strict` | ✓ | ✓ | Mounts the filesystem read-only except for explicitly allowed paths |
+| `ProtectHome=true` | ✓ | ✓ | Makes home directories inaccessible |
+| `PrivateTmp=true` | ✓ | ✓ | Gives the service an isolated `/tmp` namespace |
+| `ReadWritePaths=...` | ✓ | — | Only `edgecaster.service` explicitly grants write access to `/etc/edgecaster`, `/var/lib/edgecaster`, and `/var/log/edgecaster` |
+
+<Note>
+`mediamtx.service` does not need `ReadWritePaths` because it only writes logs to stdout (captured by journald) and reads its config at startup.
+</Note>
 
 The `edgecaster-update.service` runs as `root` because it performs `git pull`, `pip install`, `npm run build`, and `systemctl restart` — operations that require elevated privileges.

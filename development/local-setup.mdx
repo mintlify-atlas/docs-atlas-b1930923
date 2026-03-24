@@ -39,8 +39,10 @@ EdgeCaster consists of a Python/FastAPI backend and a React/TypeScript frontend.
       </Step>
 
       <Step title="Start the development server">
+        Run from the **repository root** (not from inside `backend/`):
+
         ```bash
-        cd backend && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+        uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000
         ```
 
         The `--reload` flag enables automatic restart on code changes. The API will be available at `http://localhost:8000`.
@@ -48,7 +50,7 @@ EdgeCaster consists of a Python/FastAPI backend and a React/TypeScript frontend.
     </Steps>
 
     <Note>
-      Python imports use fully-qualified paths from the repo root — for example `from backend.app.config import load_config`. The backend is **not** an installable package. Always run `uvicorn` with the working directory set to the repo root (i.e. `cd backend && uvicorn app.main:app ...` from within the repo root, or run `uvicorn backend.app.main:app ...` from the root directly).
+      Python imports use fully-qualified paths from the repo root — for example `from backend.app.config import load_config`. Always run `uvicorn` from the **repo root** using the module path `backend.app.main:app`. Running it from inside `backend/` will break all imports.
     </Note>
   </Tab>
 
@@ -77,16 +79,16 @@ The config loader in `backend/app/config.py` automatically selects file paths ba
 
 | What | Dev path (`EDGECASTER_ENV != "production"`) | Production path |
 |------|---------------------------------------------|-----------------|
-| Config YAML | `backend/data/config.yaml` | `/etc/edgecaster/config.yaml` |
-| State JSON | `backend/data/state.json` | `/var/lib/edgecaster/state.json` |
-| Log directory | `backend/data/logs/` | `/var/log/edgecaster/` |
+| Config YAML | `data/config.yaml` | `/etc/edgecaster/config.yaml` |
+| State JSON | `data/state.json` | `/var/lib/edgecaster/state.json` |
+| Log directory | `data/logs/` | `/var/log/edgecaster/` |
 
-In dev mode all these paths are created automatically under `backend/data/` on first run, so no manual directory setup is needed.
+In dev mode all these paths are created automatically under `data/` at the repo root on first run, so no manual directory setup is needed.
 
 To explicitly run in production mode locally (e.g. to test against `/etc/edgecaster/`):
 
 ```bash
-EDGECASTER_ENV=production uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+EDGECASTER_ENV=production uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ## Build the frontend for production

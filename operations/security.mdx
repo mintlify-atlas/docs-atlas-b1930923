@@ -42,17 +42,15 @@ Security relies entirely on network isolation. The intended deployment model is:
 
 ## Systemd Service Hardening
 
-Both `edgecaster.service` and `mediamtx.service` run with systemd security directives that limit what the processes can do, even if compromised:
+Both `edgecaster.service` and `mediamtx.service` run as the unprivileged `edgecaster` user and include systemd security directives that limit what the processes can do, even if compromised:
 
-| Directive | Effect |
-|-----------|--------|
-| `NoNewPrivileges=true` | Prevents the process from gaining additional privileges via setuid/setgid binaries |
-| `ProtectSystem=strict` | Mounts the entire filesystem read-only except for explicitly listed paths |
-| `ProtectHome=true` | Makes home directories inaccessible to the service |
-| `PrivateTmp=true` | Gives the service its own isolated `/tmp` namespace |
-| `ReadWritePaths=...` | Only `/etc/edgecaster`, `/var/lib/edgecaster`, and `/var/log/edgecaster` are writable |
-
-Both services run as the unprivileged `edgecaster` user (not root).
+| Directive | `edgecaster.service` | `mediamtx.service` | Effect |
+|-----------|---|---|--------|
+| `NoNewPrivileges=true` | ✓ | ✓ | Prevents privilege escalation via setuid/setgid binaries |
+| `ProtectSystem=strict` | ✓ | ✓ | Mounts the filesystem read-only except for explicitly listed paths |
+| `ProtectHome=true` | ✓ | ✓ | Makes home directories inaccessible |
+| `PrivateTmp=true` | ✓ | ✓ | Gives the service an isolated `/tmp` namespace |
+| `ReadWritePaths=...` | ✓ | — | Only `edgecaster.service` explicitly grants write access to `/etc/edgecaster`, `/var/lib/edgecaster`, and `/var/log/edgecaster` |
 
 ## RTSP Stream Security
 

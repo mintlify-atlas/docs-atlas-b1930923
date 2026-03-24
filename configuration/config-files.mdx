@@ -9,10 +9,10 @@ EdgeCaster uses three files to persist its configuration and runtime state. In p
 
 | File | Production path | Dev path |
 |------|----------------|----------|
-| Main config | `/etc/edgecaster/config.yaml` | `backend/data/config.yaml` |
+| Main config | `/etc/edgecaster/config.yaml` | `data/config.yaml` |
 | MediaMTX config | `/etc/edgecaster/mediamtx.yml` | _(not used in dev)_ |
-| Stream state | `/var/lib/edgecaster/state.json` | `backend/data/state.json` |
-| Log directory | `/var/log/edgecaster/` | `backend/data/logs/` |
+| Stream state | `/var/lib/edgecaster/state.json` | `data/state.json` |
+| Log directory | `/var/log/edgecaster/` | `data/logs/` |
 
 <Note>
 The active mode is controlled by the `EDGECASTER_ENV` environment variable. Any value other than `production` is treated as dev mode. The systemd service unit sets `EDGECASTER_ENV=production` automatically.
@@ -158,14 +158,14 @@ The MediaMTX configuration file at `/etc/edgecaster/mediamtx.yml` is passed dire
 
 ## Dev vs. production paths
 
-When `EDGECASTER_ENV` is not set to `production` (the default for local development), the backend resolves all paths relative to the repository root:
+When `EDGECASTER_ENV` is not set to `production` (the default for local development), the backend resolves all paths to a `data/` directory at the repository root:
 
 ```
-backend/data/config.yaml   ← main config
-backend/data/state.json    ← stream state
-backend/data/logs/         ← log output
+data/config.yaml   ← main config
+data/state.json    ← stream state
+data/logs/         ← log output
 ```
 
-These paths are created automatically if they do not exist. The `backend/data/` directory is excluded from version control via `.gitignore`.
+These paths are created automatically if they do not exist. The `data/` directory is excluded from version control via `.gitignore`.
 
 In production, the installer creates the system directories, copies `packaging/edgecaster.default.yaml` to `/etc/edgecaster/config.yaml`, and sets `EDGECASTER_ENV=production` in the systemd service environment.
